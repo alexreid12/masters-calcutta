@@ -62,6 +62,9 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   // Status advance
   const [statusLoading, setStatusLoading] = useState(false);
 
+  // Delete pool
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   async function load() {
     const [poolRes, golfersRes] = await Promise.all([
       supabase.from('pools').select('*').eq('id', params.id).single(),
@@ -177,6 +180,16 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     }
   }
 
+  async function deletePool() {
+    const confirmed = window.confirm(
+      'Are you sure? This will permanently delete the pool and all associated data.'
+    );
+    if (!confirmed) return;
+    setDeleteLoading(true);
+    await supabase.from('pools').delete().eq('id', params.id);
+    router.push('/');
+  }
+
   async function advanceStatus() {
     if (!pool) return;
     const next = STATUS_TRANSITIONS[pool.status];
@@ -196,9 +209,19 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-2xl text-masters-green">Admin</h2>
-        <Link href={`/pool/${params.id}/admin/payouts`} className="btn-outline text-sm">
-          Payout Rules →
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link href={`/pool/${params.id}/admin/payouts`} className="btn-outline text-sm">
+            Payout Rules →
+          </Link>
+          <button
+            onClick={deletePool}
+            disabled={deleteLoading}
+            className="flex items-center gap-2 text-sm text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {deleteLoading && <Spinner className="text-red-500 w-3.5 h-3.5" />}
+            Delete Pool
+          </button>
+        </div>
       </div>
 
       {/* Pool status */}
