@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --font-playfair: 'Playfair Display', Georgia, serif;
+  --font-source-sans: 'Source Sans 3', system-ui, sans-serif;
+  --font-jetbrains: 'JetBrains Mono', monospace;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-source-sans);
+  }
+
+  body {
+    @apply bg-masters-cream text-gray-900 antialiased;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-playfair);
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-masters-green text-masters-cream font-body font-semibold px-4 py-2 rounded
+           hover:bg-masters-green-dark active:scale-95 transition-all duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-gold {
+    @apply bg-masters-gold text-gray-900 font-body font-semibold px-4 py-2 rounded
+           hover:bg-masters-gold-dark active:scale-95 transition-all duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-outline {
+    @apply border border-masters-green text-masters-green font-body font-semibold px-4 py-2 rounded
+           hover:bg-masters-green hover:text-masters-cream active:scale-95 transition-all duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply text-gray-600 font-body px-3 py-1.5 rounded hover:bg-gray-100
+           active:scale-95 transition-all duration-150;
+  }
+
+  .card {
+    @apply bg-white rounded-lg shadow-sm border border-masters-cream-dark p-4;
+  }
+
+  .input {
+    @apply w-full border border-gray-300 rounded px-3 py-2 text-sm font-body
+           focus:outline-none focus:ring-2 focus:ring-masters-green focus:border-transparent
+           disabled:bg-gray-50 disabled:cursor-not-allowed;
+  }
+
+  .badge-green {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold
+           bg-masters-green text-white;
+  }
+
+  .badge-gold {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold
+           bg-masters-gold text-gray-900;
+  }
+
+  .badge-gray {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold
+           bg-gray-100 text-gray-600;
+  }
+
+  .score-under-par {
+    @apply text-red-600 font-mono font-medium;
+  }
+
+  .score-over-par {
+    @apply text-gray-800 font-mono font-medium;
+  }
+
+  .score-even-par {
+    @apply text-gray-600 font-mono font-medium;
+  }
+
+  /* Number/money display */
+  .money {
+    font-family: var(--font-jetbrains);
+  }
+}
+
+/* Bid flash animation for live auction rows */
+.bid-flash {
+  animation: bid-flash 1s ease-out;
+}
+
+@keyframes bid-flash {
+  0% { background-color: rgba(212, 175, 55, 0.4); }
+  100% { background-color: transparent; }
+}
+
+/* Score pulse when updated */
+.score-pulse {
+  animation: score-pulse 2s ease-in-out 3;
+}
+
+@keyframes score-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Smooth scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d4af37 #f5f0e1;
+}
