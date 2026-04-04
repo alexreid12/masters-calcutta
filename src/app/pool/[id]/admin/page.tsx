@@ -186,7 +186,12 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     );
     if (!confirmed) return;
     setDeleteLoading(true);
-    await supabase.from('pools').delete().eq('id', params.id);
+    const { error } = await supabase.from('pools').delete().eq('id', params.id);
+    if (error) {
+      alert(`Delete failed: ${error.message}`);
+      setDeleteLoading(false);
+      return;
+    }
     router.push('/');
   }
 
