@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { createClient } from '@/lib/supabase/server';
 import Link from 'next/link';
-import { StatusBadge, Money } from '@/components/ui';
+import { StatusBadge, Money, cn } from '@/components/ui';
 import type { Pool } from '@/types/database';
 import { redirect } from 'next/navigation';
 import { TopNav } from '@/components/TopNav';
@@ -20,10 +20,25 @@ export default async function HomePage() {
     .eq('id', user.id)
     .maybeSingle();
 
-  const { data: pools } = await supabase
+  // Get pools the current user is a member of
+  const { data: memberships } = await supabase
+    .from('pool_members')
+    .select('pool_id')
+    .eq('user_id', user.id);
+
+  const memberPoolIds = (memberships ?? []).map((m: any) => m.pool_id as string);
+
+  // Show public pools + any private pool the user is a member of
+  const poolQuery = supabase
     .from('pools')
     .select('*, profiles!commissioner_id(display_name)')
     .order('created_at', { ascending: false });
+
+  const { data: pools } = await (
+    memberPoolIds.length > 0
+      ? poolQuery.or(`is_private.eq.false,id.in.(${memberPoolIds.join(',')})`)
+      : poolQuery.eq('is_private', false)
+  );
 
   return (
     <div className="min-h-screen bg-masters-cream">
@@ -74,9 +89,16 @@ export default async function HomePage() {
                 className="card hover:shadow-md hover:border-masters-gold/40 transition-all group"
               >
                 <div className="flex items-start justify-between mb-2">
-                  <h3 className="font-display text-lg text-masters-green group-hover:text-masters-green-dark font-semibold">
-                    {pool.name}
-                  </h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-display text-lg text-masters-green group-hover:text-masters-green-dark font-semibold">
+                      {pool.name}
+                    </h3>
+                    {pool.is_private && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-100 text-gray-500">
+                        Private
+                      </span>
+                    )}
+                  </div>
                   <StatusBadge status={pool.status} />
                 </div>
                 <p className="text-sm text-gray-500 mb-3">

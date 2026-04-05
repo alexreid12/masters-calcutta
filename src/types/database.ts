@@ -31,7 +31,19 @@ export interface Pool {
   live_auction_start: string | null;
   total_pot: number;
   commissioner_id: string;
+  is_private: boolean;
+  join_password: string | null;
+  invite_code: string | null;
   created_at: string;
+}
+
+export interface PoolMember {
+  id: string;
+  pool_id: string;
+  user_id: string;
+  joined_at: string;
+  // joined
+  profile?: Profile;
 }
 
 export interface Golfer {

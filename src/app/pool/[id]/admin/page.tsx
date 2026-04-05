@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/components/AuthProvider';
 import { useRouter } from 'next/navigation';
 import { Spinner } from '@/components/ui';
-import type { Pool, Golfer, PoolStatus } from '@/types/database';
+import type { Pool, Golfer, PoolStatus, PoolMember, Profile } from '@/types/database';
 import Papa from 'papaparse';
 import Link from 'next/link';
 
@@ -65,18 +65,32 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   // Delete pool
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  // Share & Privacy
+  type MemberWithProfile = PoolMember & { profiles: Pick<Profile, 'display_name' | 'email'> | null };
+  const [members, setMembers] = useState<MemberWithProfile[]>([]);
+  const [isPrivateDraft, setIsPrivateDraft] = useState(false);
+  const [passwordDraft, setPasswordDraft] = useState('');
+  const [savingPrivacy, setSavingPrivacy] = useState(false);
+  const [privacyMessage, setPrivacyMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  const [removingMember, setRemovingMember] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+
   async function load() {
-    const [poolRes, golfersRes] = await Promise.all([
+    const [poolRes, golfersRes, membersRes] = await Promise.all([
       supabase.from('pools').select('*').eq('id', params.id).single(),
       supabase.from('golfers').select('*').eq('pool_id', params.id).order('world_ranking', { nullsFirst: false }),
+      supabase.from('pool_members').select('*, profiles!user_id(display_name, email)').eq('pool_id', params.id),
     ]);
     if (poolRes.data) {
       setPool(poolRes.data);
+      setIsPrivateDraft(poolRes.data.is_private ?? false);
+      setPasswordDraft(poolRes.data.join_password ?? '');
       if (user && poolRes.data.commissioner_id === user.id) {
         setAuthorized(true);
       }
     }
     setGolfers(golfersRes.data ?? []);
+    setMembers((membersRes.data as MemberWithProfile[]) ?? []);
     setLoading(false);
   }
 
@@ -195,6 +209,40 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     router.push('/');
   }
 
+  function copyInviteLink() {
+    if (!pool?.invite_code) return;
+    navigator.clipboard.writeText(`${window.location.origin}/join/${pool.invite_code}`);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  }
+
+  async function savePrivacySettings() {
+    setSavingPrivacy(true);
+    setPrivacyMessage(null);
+    const { error } = await supabase
+      .from('pools')
+      .update({
+        is_private: isPrivateDraft,
+        join_password: passwordDraft.trim() || null,
+      })
+      .eq('id', params.id);
+    if (error) {
+      setPrivacyMessage({ text: error.message, ok: false });
+    } else {
+      setPrivacyMessage({ text: 'Settings saved.', ok: true });
+      await load();
+    }
+    setSavingPrivacy(false);
+    setTimeout(() => setPrivacyMessage(null), 3000);
+  }
+
+  async function removeMember(userId: string) {
+    setRemovingMember(userId);
+    await supabase.from('pool_members').delete().eq('pool_id', params.id).eq('user_id', userId);
+    await load();
+    setRemovingMember(null);
+  }
+
   async function advanceStatus() {
     if (!pool) return;
     const next = STATUS_TRANSITIONS[pool.status];
@@ -264,6 +312,114 @@ export default function AdminPage({ params }: { params: { id: string } }) {
                 {refreshResult.text}
               </p>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* Share & Privacy */}
+      <div className="card space-y-4">
+        <h3 className="font-display text-lg text-masters-green">Share &amp; Privacy</h3>
+
+        {/* Invite link */}
+        {pool?.invite_code && (
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Invite Link</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 font-mono text-gray-700 truncate">
+                {typeof window !== 'undefined' ? window.location.origin : ''}/join/{pool.invite_code}
+              </code>
+              <button onClick={copyInviteLink} className="btn-primary shrink-0 text-sm py-1.5 px-3">
+                {linkCopied ? 'Copied!' : 'Copy Link'}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              Code: <span className="font-mono font-semibold">{pool.invite_code}</span>
+            </p>
+          </div>
+        )}
+
+        {/* Privacy toggle + password */}
+        <div className="pt-3 border-t border-masters-cream-dark space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Private Pool</p>
+              <p className="text-xs text-gray-400">Hidden from home page; invite-link access only</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPrivateDraft((v) => !v)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                isPrivateDraft ? 'bg-masters-green' : 'bg-gray-200'
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                isPrivateDraft ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Password <span className="text-gray-400">(optional — leave blank for invite-link-only)</span>
+            </label>
+            <input
+              type="text"
+              value={passwordDraft}
+              onChange={(e) => setPasswordDraft(e.target.value)}
+              className="input text-sm"
+              placeholder="No password"
+            />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={savePrivacySettings}
+              disabled={savingPrivacy}
+              className="btn-primary flex items-center gap-2 text-sm"
+            >
+              {savingPrivacy && <Spinner className="text-white w-3.5 h-3.5" />}
+              Save
+            </button>
+            {privacyMessage && (
+              <p className={`text-xs font-medium ${privacyMessage.ok ? 'text-masters-green' : 'text-red-500'}`}>
+                {privacyMessage.text}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Members list */}
+        {members.length > 0 && (
+          <div className="pt-3 border-t border-masters-cream-dark">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              Members <span className="font-mono text-gray-400">({members.length})</span>
+            </p>
+            <div className="space-y-1">
+              {members.map((m) => (
+                <div key={m.id} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50">
+                  <div>
+                    <span className="text-sm font-medium text-gray-800">
+                      {m.profiles?.display_name ?? '—'}
+                    </span>
+                    {m.user_id === pool?.commissioner_id && (
+                      <span className="ml-1.5 text-[10px] font-semibold text-masters-green bg-masters-green/10 px-1.5 py-0.5 rounded">
+                        Commissioner
+                      </span>
+                    )}
+                    <p className="text-xs text-gray-400">{m.profiles?.email}</p>
+                  </div>
+                  {m.user_id !== pool?.commissioner_id && (
+                    <button
+                      onClick={() => removeMember(m.user_id)}
+                      disabled={removingMember === m.user_id}
+                      className="text-xs text-red-400 hover:text-red-600 hover:underline disabled:opacity-40"
+                    >
+                      {removingMember === m.user_id ? '…' : 'Remove'}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
