@@ -38,7 +38,10 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [flashKey, setFlashKey] = useState(0);
+  const [winFlash, setWinFlash] = useState(false);
+  const [myTeamOpen, setMyTeamOpen] = useState(false);
   const prevBidRef = useRef<number>(0);
+  const prevWinCountRef = useRef<number>(0);
 
   const isCommissioner = pool?.commissioner_id === user?.id;
 
@@ -66,18 +69,18 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
         .order('world_ranking', { nullsFirst: false }),
       supabase
         .from('ownership')
-        .select('golfer_id, profiles!user_id(display_name)')
+        .select('golfer_id, user_id, profiles!user_id(display_name)')
         .eq('pool_id', params.id),
     ]);
 
     if (poolRes.data) setPool(poolRes.data);
 
     const soldGolferIds = new Set((soldRes.data ?? []).map((s: any) => s.golfer_id));
-    const ownerMap = new Map((ownershipsRes.data ?? []).map((o: any) => [o.golfer_id, o.profiles?.display_name]));
+    const ownerMap = new Map((ownershipsRes.data ?? []).map((o: any) => [o.golfer_id, { display_name: o.profiles?.display_name, user_id: o.user_id }]));
 
     const soldWithOwners = (soldRes.data ?? []).map((s: any) => ({
       ...s,
-      owner: ownerMap.has(s.golfer_id) ? { display_name: ownerMap.get(s.golfer_id) } : null,
+      owner: ownerMap.has(s.golfer_id) ? { display_name: ownerMap.get(s.golfer_id)?.display_name } : null,
     }));
 
     const pending = (pendingGolfersRes.data ?? []).filter(
@@ -95,12 +98,16 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
   useEffect(() => {
     loadState();
 
-    // Subscribe to live_auction changes
     const channel = supabase
       .channel(`auction:${params.id}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'live_auction', filter: `pool_id=eq.${params.id}` },
+        () => loadState()
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'ownership', filter: `pool_id=eq.${params.id}` },
         () => loadState()
       )
       .subscribe();
@@ -118,6 +125,16 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     prevBidRef.current = currentBid;
   }, [state.item?.current_bid]);
 
+  // Win celebration when user's golfer count increases
+  useEffect(() => {
+    const myWinCount = state.sold.filter((s) => s.current_bidder_id === user?.id).length;
+    if (myWinCount > prevWinCountRef.current && prevWinCountRef.current >= 0 && !loading) {
+      setWinFlash(true);
+      setTimeout(() => setWinFlash(false), 1500);
+    }
+    prevWinCountRef.current = myWinCount;
+  }, [state.sold, user?.id, loading]);
+
   const minBid = state.item
     ? Math.max(state.item.floor_price, state.item.current_bid + 1)
     : 1;
@@ -132,17 +149,16 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     setError('');
     setSubmitting(true);
 
-    // Optimistic locking: only succeed if current_bid hasn't changed
     const { error } = await supabase
       .from('live_auction')
       .update({
         current_bid: amount,
         current_bidder_id: user!.id,
         bid_count: state.item.bid_count + 1,
-        status: 'open', // reset to open on new bid
+        status: 'open',
       })
       .eq('id', state.item.id)
-      .eq('current_bid', state.item.current_bid); // optimistic lock
+      .eq('current_bid', state.item.current_bid);
 
     if (error) {
       setError('Bid failed — someone else bid first. Try again.');
@@ -152,9 +168,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     setSubmitting(false);
   }
 
-  // Commissioner controls
   async function nominateGolfer(golferId: string) {
-    // Find floor price from async bids
     const { data: highBid } = await supabase
       .from('async_high_bids')
       .select('high_bid')
@@ -183,9 +197,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     if (!nextStatus) return;
 
     const update: Record<string, unknown> = { status: nextStatus };
-    if (nextStatus === 'sold') {
-      update.sold_at = new Date().toISOString();
-    }
+    if (nextStatus === 'sold') update.sold_at = new Date().toISOString();
 
     const { error: updateError } = await supabase
       .from('live_auction')
@@ -197,7 +209,6 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
       return;
     }
 
-    // When sold, create ownership record only after confirmed status update
     if (nextStatus === 'sold' && state.item.current_bidder_id) {
       await supabase.from('ownership').insert({
         pool_id: params.id,
@@ -218,16 +229,63 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     (v, i, arr) => arr.indexOf(v) === i
   );
 
-  if (loading) return <div className="flex justify-center py-20"><Spinner className="text-masters-green w-8 h-8" /></div>;
+  // Derived: current user's won golfers
+  const myGolfers = state.sold
+    .filter((s) => s.current_bidder_id === user?.id)
+    .sort((a, b) => b.current_bid - a.current_bid);
+  const myTotalSpent = myGolfers.reduce((sum, s) => sum + s.current_bid, 0);
 
+  if (loading) return <div className="flex justify-center py-20"><Spinner className="text-masters-green w-8 h-8" /></div>;
   if (!pool) return null;
 
   const isActive = ['live_auction', 'locked', 'tournament_active', 'completed'].includes(pool.status);
 
   return (
-    <div className="grid lg:grid-cols-3 gap-6">
-      {/* Main auction area */}
-      <div className="lg:col-span-2 space-y-4">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      {/* ── Left / top: My Team ───────────────────────────────────────────── */}
+      <div className="lg:order-1 order-1">
+        {/* Mobile: collapsible toggle */}
+        <button
+          className="lg:hidden w-full flex items-center justify-between card py-3 px-4 mb-0 text-left"
+          onClick={() => setMyTeamOpen((v) => !v)}
+        >
+          <span className="font-display text-lg text-masters-green">
+            My Team {myGolfers.length > 0 && <span className="text-sm font-mono text-gray-400">({myGolfers.length})</span>}
+          </span>
+          <span className="text-gray-400 text-sm">{myTeamOpen ? '▲' : '▼'}</span>
+        </button>
+
+        {/* Panel — always visible on desktop, toggled on mobile */}
+        <div className={`card ${myTeamOpen ? '' : 'hidden lg:block'} transition-all ${winFlash ? 'ring-2 ring-masters-green bg-masters-green/5' : ''}`}>
+          <h3 className="font-display text-lg text-masters-green mb-3 hidden lg:block">My Team</h3>
+
+          {myGolfers.length === 0 ? (
+            <p className="text-sm text-gray-400 py-4 text-center">No golfers yet — start bidding!</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-3 pb-2 border-b border-masters-cream-dark">
+                <span className="text-xs text-gray-500">Total Spent</span>
+                <span className="font-mono font-semibold text-masters-green text-sm">${myTotalSpent}</span>
+              </div>
+              <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                {myGolfers.map((s: any) => (
+                  <div
+                    key={s.id}
+                    className={`flex items-center justify-between py-1.5 border-b border-masters-cream-dark last:border-0 ${winFlash && s === myGolfers[0] ? 'text-masters-green font-semibold' : ''}`}
+                  >
+                    <span className="text-sm font-medium">{s.golfer?.name}</span>
+                    <Money amount={s.current_bid} className="text-masters-green text-sm font-mono" />
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Center: Active Auction ────────────────────────────────────────── */}
+      <div className="lg:order-2 order-2 space-y-4">
         <h2 className="font-display text-2xl text-masters-green">Live Auction</h2>
 
         {!state.item ? (
@@ -239,12 +297,12 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
         ) : (
           <div
             key={flashKey}
-            className={`card border-2 ${
+            className={`card border-2 bid-flash ${
               state.item.status === 'going_once' ? 'border-yellow-400' :
               state.item.status === 'going_twice' ? 'border-orange-400' :
               state.item.status === 'sold' ? 'border-red-400' :
               'border-masters-green'
-            } bid-flash`}
+            }`}
           >
             {/* Golfer info */}
             <div className="flex items-start justify-between mb-4">
@@ -327,7 +385,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
                     className="btn-gold flex items-center gap-2"
                   >
                     {submitting && <Spinner className="w-4 h-4" />}
-                    {state.item.current_bidder_id === user?.id ? 'You\'re leading' : 'Place Bid'}
+                    {state.item.current_bidder_id === user?.id ? 'You\'re leading' : 'BID!'}
                   </button>
                 </div>
                 {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
@@ -358,60 +416,62 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
             )}
           </div>
         )}
-
-        {/* Nominate panel (commissioner) */}
-        {isCommissioner && state.pending.length > 0 && !state.item && (
-          <div className="card">
-            <h3 className="font-display text-lg text-masters-green mb-3">Nominate a Golfer</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {state.pending.slice(0, 18).map((g) => (
-                <button
-                  key={g.id}
-                  onClick={() => nominateGolfer(g.id)}
-                  className="text-left p-2 rounded border border-masters-green/20 hover:border-masters-green hover:bg-masters-green/5 transition-colors"
-                >
-                  <p className="text-sm font-medium">{g.name}</p>
-                  <p className="text-xs text-gray-400">#{g.world_ranking ?? '?'}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Sidebar */}
-      <div className="space-y-4">
+      {/* ── Right: Remaining & Sold ───────────────────────────────────────── */}
+      <div className="lg:order-3 order-3 space-y-4">
+
         {/* Remaining golfers */}
         {state.pending.length > 0 && (
-          <div className="card">
-            <h3 className="font-semibold text-gray-700 mb-2">
-              Remaining <span className="badge-gray ml-1">{state.pending.length}</span>
-            </h3>
-            <div className="max-h-64 overflow-y-auto space-y-1">
+          <div className="card p-0 overflow-hidden">
+            <div className="px-4 py-3 border-b border-masters-cream-dark">
+              <h3 className="font-semibold text-gray-700 text-sm">
+                Remaining <span className="badge-gray ml-1">{state.pending.length}</span>
+              </h3>
+            </div>
+            <div className="max-h-72 overflow-y-auto">
               {state.pending.map((g) => (
-                <div key={g.id} className="flex items-center justify-between py-1 text-sm border-b border-masters-cream-dark last:border-0">
-                  <span className="font-medium">{g.name}</span>
-                  <span className="text-gray-400 text-xs">#{g.world_ranking ?? '?'}</span>
+                <div
+                  key={g.id}
+                  className="flex items-center justify-between px-4 py-2 border-b border-masters-cream-dark last:border-0 hover:bg-gray-50"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{g.name}</p>
+                    <p className="text-xs text-gray-400">#{g.world_ranking ?? '?'}</p>
+                  </div>
+                  {isCommissioner && !state.item && (
+                    <button
+                      onClick={() => nominateGolfer(g.id)}
+                      className="ml-2 shrink-0 text-xs text-masters-green border border-masters-green/30 hover:bg-masters-green hover:text-white px-2 py-0.5 rounded transition-colors"
+                    >
+                      Nominate
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Sold */}
+        {/* Recently sold */}
         {state.sold.length > 0 && (
-          <div className="card">
-            <h3 className="font-semibold text-gray-700 mb-2">
-              Sold <span className="badge-green ml-1">{state.sold.length}</span>
-            </h3>
-            <div className="max-h-80 overflow-y-auto space-y-1">
-              {state.sold.map((s: any) => (
-                <div key={s.id} className="flex items-center justify-between py-1 text-sm border-b border-masters-cream-dark last:border-0">
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{s.golfer?.name}</p>
+          <div className="card p-0 overflow-hidden">
+            <div className="px-4 py-3 border-b border-masters-cream-dark">
+              <h3 className="font-semibold text-gray-700 text-sm">
+                Sold <span className="badge-green ml-1">{state.sold.length}</span>
+              </h3>
+            </div>
+            <div className="max-h-72 overflow-y-auto">
+              {state.sold.slice(0, 10).map((s: any) => (
+                <div
+                  key={s.id}
+                  className="flex items-center justify-between px-4 py-2 border-b border-masters-cream-dark last:border-0"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{s.golfer?.name}</p>
                     <p className="text-xs text-gray-400 truncate">{s.owner?.display_name ?? '—'}</p>
                   </div>
-                  <Money amount={s.current_bid} className="text-masters-green ml-2 shrink-0" />
+                  <Money amount={s.current_bid} className="text-masters-green text-sm font-mono ml-2 shrink-0" />
                 </div>
               ))}
             </div>

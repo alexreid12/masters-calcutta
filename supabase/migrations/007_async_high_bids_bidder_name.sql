@@ -1,7 +1,9 @@
 -- Migration 007: Update async_high_bids view to expose high bidder info
 -- The view already bypasses RLS (runs as view owner), so this is safe to expose publicly.
 
-CREATE OR REPLACE VIEW async_high_bids AS
+DROP VIEW IF EXISTS async_high_bids;
+
+CREATE VIEW async_high_bids AS
   SELECT DISTINCT ON (b.golfer_id)
     b.golfer_id,
     b.pool_id,

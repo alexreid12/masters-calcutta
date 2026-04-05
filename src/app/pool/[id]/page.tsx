@@ -4,11 +4,18 @@ import { createClient } from '@/lib/supabase/server';
 import { notFound } from 'next/navigation';
 import { StatusBadge, Money, ScoreDisplay } from '@/components/ui';
 import Link from 'next/link';
+import type { PayoutRule } from '@/types/database';
+
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
 
 export default async function PoolDashboardPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
 
-  const [poolRes, statsRes, recentSalesRes, leaderRes] = await Promise.all([
+  const [poolRes, statsRes, recentSalesRes, leaderRes, rulesRes] = await Promise.all([
     supabase
       .from('pools')
       .select('*, profiles!commissioner_id(display_name)')
@@ -30,6 +37,12 @@ export default async function PoolDashboardPage({ params }: { params: { id: stri
       .eq('pool_id', params.id)
       .order('total_to_par', { ascending: true })
       .limit(5),
+    supabase
+      .from('payout_rules')
+      .select('*')
+      .eq('pool_id', params.id)
+      .eq('is_active', true)
+      .order('finish_position', { ascending: true }),
   ]);
 
   if (poolRes.error || !poolRes.data) notFound();
@@ -37,6 +50,10 @@ export default async function PoolDashboardPage({ params }: { params: { id: stri
   const golfers = statsRes.data ?? [];
   const recentSales = recentSalesRes.data ?? [];
   const leaders = leaderRes.data ?? [];
+  const allRules: PayoutRule[] = (rulesRes.data ?? []) as PayoutRule[];
+
+  const positionRules = allRules.filter((r) => r.rule_type === 'position');
+  const specialRules = allRules.filter((r) => r.rule_type !== 'position');
 
   const totalGolfers = golfers.length;
   const soldGolfers = recentSales.length;
@@ -50,6 +67,8 @@ export default async function PoolDashboardPage({ params }: { params: { id: stri
     { label: 'Completed', status: 'completed', current: pool.status === 'completed' },
   ];
   const currentIdx = statusTimeline.findIndex((s) => s.current);
+
+  const hasPot = pool.total_pot > 0;
 
   return (
     <div className="space-y-6">
@@ -102,6 +121,90 @@ export default async function PoolDashboardPage({ params }: { params: { id: stri
           </div>
         ))}
       </div>
+
+      {/* Payout Structure */}
+      {allRules.length > 0 && (
+        <div className="card">
+          <h3 className="font-display text-lg text-masters-green mb-4">Payout Structure</h3>
+
+          <div className="grid sm:grid-cols-2 gap-6">
+            {/* Tournament Finish */}
+            {positionRules.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tournament Finish</p>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-masters-cream-dark">
+                      <th className="text-left pb-1.5 font-medium text-gray-600">Position</th>
+                      <th className="text-right pb-1.5 font-medium text-gray-600">Payout</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positionRules.map((rule) => (
+                      <tr key={rule.id} className="border-b border-masters-cream-dark last:border-0">
+                        <td className="py-2 text-gray-700">
+                          {rule.label || `${ordinal(rule.finish_position)} Place`}
+                        </td>
+                        <td className="py-2 text-right">
+                          <span className="font-mono font-semibold text-masters-green">
+                            {Number(rule.payout_percentage).toFixed(1)}%
+                          </span>
+                          {hasPot && (
+                            <span className="text-xs text-gray-400 ml-1.5">
+                              (${Math.round((Number(rule.payout_percentage) / 100) * pool.total_pot).toLocaleString()})
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Special Awards */}
+            {specialRules.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Special Awards</p>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-masters-cream-dark">
+                      <th className="text-left pb-1.5 font-medium text-gray-600">Award</th>
+                      <th className="text-right pb-1.5 font-medium text-gray-600">Payout</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {specialRules.map((rule) => (
+                      <tr key={rule.id} className="border-b border-masters-cream-dark last:border-0">
+                        <td className="py-2 text-gray-700">
+                          {rule.label}
+                          {rule.round_number !== null && (
+                            <span className="text-xs text-gray-400 ml-1">— Day {rule.round_number}</span>
+                          )}
+                        </td>
+                        <td className="py-2 text-right">
+                          <span className="font-mono font-semibold text-masters-green">
+                            {Number(rule.payout_percentage).toFixed(1)}%
+                          </span>
+                          {hasPot && (
+                            <span className="text-xs text-gray-400 ml-1.5">
+                              (${Math.round((Number(rule.payout_percentage) / 100) * pool.total_pot).toLocaleString()})
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <p className="text-xs text-gray-400 mt-4 pt-3 border-t border-masters-cream-dark">
+            If golfers tie for a position, payouts for those positions are combined and split evenly among the tied golfers&apos; owners.
+          </p>
+        </div>
+      )}
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* Recent Sales */}
