@@ -28,7 +28,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function LiveAuctionPage({ params }: { params: { id: string } }) {
-  const supabase = createClient();
+  const supabaseRef = useRef(createClient());
+  const supabase = supabaseRef.current;
   const { user, profile } = useAuth();
   const [pool, setPool] = useState<Pool | null>(null);
   const [state, setState] = useState<AuctionState>({ item: null, sold: [], pending: [] });
@@ -186,9 +187,17 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
       update.sold_at = new Date().toISOString();
     }
 
-    await supabase.from('live_auction').update(update).eq('id', state.item.id);
+    const { error: updateError } = await supabase
+      .from('live_auction')
+      .update(update)
+      .eq('id', state.item.id);
 
-    // When sold, create ownership record
+    if (updateError) {
+      setError('Failed to advance status — try again.');
+      return;
+    }
+
+    // When sold, create ownership record only after confirmed status update
     if (nextStatus === 'sold' && state.item.current_bidder_id) {
       await supabase.from('ownership').insert({
         pool_id: params.id,

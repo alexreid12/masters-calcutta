@@ -123,7 +123,12 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ golfer_id: golferId }),
     });
-    if (res.ok) await load();
+    if (res.ok) {
+      await load();
+    } else {
+      setMessages((m) => ({ ...m, [golferId]: { type: 'error', text: 'Failed to retract bid' } }));
+      setTimeout(() => setMessages((m) => { const n = { ...m }; delete n[golferId]; return n; }), 3000);
+    }
     setSubmitting(null);
   }
 

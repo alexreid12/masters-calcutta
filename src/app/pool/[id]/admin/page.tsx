@@ -87,7 +87,7 @@ export default function AdminPage({ params }: { params: { id: string } }) {
       supabase.from('golfers').select('*').eq('pool_id', params.id).order('world_ranking', { nullsFirst: false }),
       supabase.from('pool_members').select('*, profiles!user_id(display_name, email)').eq('pool_id', params.id),
       supabase.from('ownership').select('user_id, purchase_price, golfers(name), profiles!user_id(display_name)').eq('pool_id', params.id),
-      supabase.from('async_high_bids').select('golfer_id, high_bid, high_bidder_name, golfers(name)').eq('pool_id', params.id).order('high_bid', { ascending: false }),
+      supabase.from('async_high_bids').select('golfer_id, high_bid, high_bidder_name').eq('pool_id', params.id).order('high_bid', { ascending: false }),
     ]);
 
     if (poolRes.data) {
@@ -123,11 +123,13 @@ export default function AdminPage({ params }: { params: { id: string } }) {
       Array.from(summaryMap.values()).sort((a, b) => b.total_spent - a.total_spent)
     );
 
-    // Bid leaders
+    // Bid leaders — look up golfer names from already-fetched golfers array
+    // (can't use relational select on a view since views have no FK constraints)
+    const golferNameMap = new Map((golfersRes.data ?? []).map((g) => [g.id, g.name]));
     setBidLeaders(
       (bidLeadersRes.data ?? []).map((r: any) => ({
         golfer_id: r.golfer_id,
-        golfer_name: r.golfers?.name ?? 'Unknown',
+        golfer_name: golferNameMap.get(r.golfer_id) ?? 'Unknown',
         high_bid: Number(r.high_bid),
         high_bidder_name: r.high_bidder_name ?? '—',
       }))

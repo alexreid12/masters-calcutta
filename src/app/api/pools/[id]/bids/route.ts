@@ -18,23 +18,27 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // Validate pool is in async_bidding
   const { data: pool } = await supabase
     .from('pools')
-    .select('status, name')
+    .select('status, name, async_bid_deadline')
     .eq('id', params.id)
     .single();
 
   if (pool?.status !== 'async_bidding')
     return NextResponse.json({ error: 'Bidding not open' }, { status: 400 });
 
+  if (pool.async_bid_deadline && new Date() > new Date(pool.async_bid_deadline))
+    return NextResponse.json({ error: 'Bidding deadline has passed' }, { status: 400 });
+
   // Use service client to read current high bid (bypasses RLS so we see all users' bids)
+  // Note: view exposes high_bidder_id (not user_id)
   const { data: currentHigh } = await serviceClient
     .from('async_high_bids')
-    .select('user_id, high_bid')
+    .select('high_bidder_id, high_bid')
     .eq('pool_id', params.id)
     .eq('golfer_id', golfer_id)
     .maybeSingle();
 
   // Self-outbid: user already holds the high bid
-  if (currentHigh && currentHigh.user_id === user.id)
+  if (currentHigh && (currentHigh as any).high_bidder_id === user.id)
     return NextResponse.json({ error: 'You already have the high bid on this golfer' }, { status: 400 });
 
   // Min bid: must be at least current high + 1 (or $1 if no bids)
@@ -43,7 +47,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: `Bid must be at least $${minBid}` }, { status: 400 });
 
   // Capture previous high bidder (for outbid notification) before modifying
-  const prevHighBid = currentHigh ? { user_id: currentHigh.user_id, amount: Number(currentHigh.high_bid) } : null;
+  const prevHighBid = currentHigh
+    ? { user_id: (currentHigh as any).high_bidder_id as string, amount: Number(currentHigh.high_bid) }
+    : null;
 
   // Remove existing bid from this user for this golfer, then insert new one
   await supabase
