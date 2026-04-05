@@ -8,8 +8,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { golfer_id, amount } = await req.json();
-  if (!golfer_id || !amount || amount <= 0)
-    return NextResponse.json({ error: 'Invalid bid' }, { status: 400 });
+
+  // Integer validation
+  if (!golfer_id || typeof amount !== 'number' || !Number.isInteger(amount) || amount <= 0)
+    return NextResponse.json({ error: 'Bid must be a whole dollar amount greater than $0' }, { status: 400 });
+
+  const serviceClient = createServiceClient();
 
   // Validate pool is in async_bidding
   const { data: pool } = await supabase
@@ -21,17 +25,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (pool?.status !== 'async_bidding')
     return NextResponse.json({ error: 'Bidding not open' }, { status: 400 });
 
-  // Find the current highest OTHER bidder before we modify anything
-  const { data: topOtherBids } = await supabase
-    .from('async_bids')
-    .select('user_id, amount')
+  // Use service client to read current high bid (bypasses RLS so we see all users' bids)
+  const { data: currentHigh } = await serviceClient
+    .from('async_high_bids')
+    .select('user_id, high_bid')
     .eq('pool_id', params.id)
     .eq('golfer_id', golfer_id)
-    .neq('user_id', user.id)
-    .order('amount', { ascending: false })
-    .limit(1);
+    .maybeSingle();
 
-  const prevHighBid = topOtherBids?.[0] ?? null;
+  // Self-outbid: user already holds the high bid
+  if (currentHigh && currentHigh.user_id === user.id)
+    return NextResponse.json({ error: 'You already have the high bid on this golfer' }, { status: 400 });
+
+  // Min bid: must be at least current high + 1 (or $1 if no bids)
+  const minBid = currentHigh ? Number(currentHigh.high_bid) + 1 : 1;
+  if (amount < minBid)
+    return NextResponse.json({ error: `Bid must be at least $${minBid}` }, { status: 400 });
+
+  // Capture previous high bidder (for outbid notification) before modifying
+  const prevHighBid = currentHigh ? { user_id: currentHigh.user_id, amount: Number(currentHigh.high_bid) } : null;
 
   // Remove existing bid from this user for this golfer, then insert new one
   await supabase

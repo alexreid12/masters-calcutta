@@ -65,6 +65,12 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   // Delete pool
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  // Auction summary
+  type AuctionSummaryRow = { user_id: string; display_name: string; golfer_count: number; total_spent: number };
+  type BidLeaderRow = { golfer_id: string; golfer_name: string; high_bid: number; high_bidder_name: string };
+  const [auctionSummary, setAuctionSummary] = useState<AuctionSummaryRow[]>([]);
+  const [bidLeaders, setBidLeaders] = useState<BidLeaderRow[]>([]);
+
   // Share & Privacy
   type MemberWithProfile = PoolMember & { profiles: Pick<Profile, 'display_name' | 'email'> | null };
   const [members, setMembers] = useState<MemberWithProfile[]>([]);
@@ -76,11 +82,14 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   const [linkCopied, setLinkCopied] = useState(false);
 
   async function load() {
-    const [poolRes, golfersRes, membersRes] = await Promise.all([
+    const [poolRes, golfersRes, membersRes, ownershipRes, bidLeadersRes] = await Promise.all([
       supabase.from('pools').select('*').eq('id', params.id).single(),
       supabase.from('golfers').select('*').eq('pool_id', params.id).order('world_ranking', { nullsFirst: false }),
       supabase.from('pool_members').select('*, profiles!user_id(display_name, email)').eq('pool_id', params.id),
+      supabase.from('ownership').select('user_id, purchase_price, golfers(name), profiles!user_id(display_name)').eq('pool_id', params.id),
+      supabase.from('async_high_bids').select('golfer_id, high_bid, high_bidder_name, golfers(name)').eq('pool_id', params.id).order('high_bid', { ascending: false }),
     ]);
+
     if (poolRes.data) {
       setPool(poolRes.data);
       setIsPrivateDraft(poolRes.data.is_private ?? false);
@@ -91,6 +100,39 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     }
     setGolfers(golfersRes.data ?? []);
     setMembers((membersRes.data as MemberWithProfile[]) ?? []);
+
+    // Build auction summary: group ownership rows by user
+    const ownershipRows: any[] = ownershipRes.data ?? [];
+    const summaryMap = new Map<string, AuctionSummaryRow>();
+    for (const row of ownershipRows) {
+      const uid = row.user_id;
+      const existing = summaryMap.get(uid);
+      if (existing) {
+        existing.golfer_count++;
+        existing.total_spent += Number(row.purchase_price);
+      } else {
+        summaryMap.set(uid, {
+          user_id: uid,
+          display_name: (row.profiles as any)?.display_name ?? 'Unknown',
+          golfer_count: 1,
+          total_spent: Number(row.purchase_price),
+        });
+      }
+    }
+    setAuctionSummary(
+      Array.from(summaryMap.values()).sort((a, b) => b.total_spent - a.total_spent)
+    );
+
+    // Bid leaders
+    setBidLeaders(
+      (bidLeadersRes.data ?? []).map((r: any) => ({
+        golfer_id: r.golfer_id,
+        golfer_name: r.golfers?.name ?? 'Unknown',
+        high_bid: Number(r.high_bid),
+        high_bidder_name: r.high_bidder_name ?? '—',
+      }))
+    );
+
     setLoading(false);
   }
 
@@ -517,6 +559,71 @@ export default function AdminPage({ params }: { params: { id: string } }) {
           </p>
         )}
       </div>
+
+      {/* Bid Leaders — shown during async_bidding */}
+      {pool?.status === 'async_bidding' && bidLeaders.length > 0 && (
+        <div className="card overflow-x-auto p-0">
+          <div className="px-4 py-3 border-b border-masters-cream-dark">
+            <h3 className="font-display text-lg text-masters-green">
+              Bid Leaders <span className="font-mono text-sm text-gray-400">({bidLeaders.length})</span>
+            </h3>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-masters-green/10 text-left">
+                <th className="px-4 py-2 font-medium text-gray-600">Golfer</th>
+                <th className="px-4 py-2 font-medium text-gray-600 text-right">High Bid</th>
+                <th className="px-4 py-2 font-medium text-gray-600">High Bidder</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bidLeaders.map((row) => (
+                <tr key={row.golfer_id} className="border-b border-masters-cream-dark last:border-0">
+                  <td className="px-4 py-2 font-medium">{row.golfer_name}</td>
+                  <td className="px-4 py-2 font-mono text-masters-green text-right">${row.high_bid}</td>
+                  <td className="px-4 py-2 text-gray-600">{row.high_bidder_name}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Auction Summary */}
+      {auctionSummary.length > 0 && (
+        <div className="card overflow-x-auto p-0">
+          <div className="px-4 py-3 border-b border-masters-cream-dark">
+            <h3 className="font-display text-lg text-masters-green">Auction Summary</h3>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-masters-green/10 text-left">
+                <th className="px-4 py-2 font-medium text-gray-600">Participant</th>
+                <th className="px-4 py-2 font-medium text-gray-600 text-right">Golfers</th>
+                <th className="px-4 py-2 font-medium text-gray-600 text-right">Total Spent</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auctionSummary.map((row) => (
+                <tr key={row.user_id} className="border-b border-masters-cream-dark last:border-0">
+                  <td className="px-4 py-2 font-medium">{row.display_name}</td>
+                  <td className="px-4 py-2 text-gray-600 text-right font-mono">{row.golfer_count}</td>
+                  <td className="px-4 py-2 text-masters-green font-mono text-right">${row.total_spent.toFixed(2)}</td>
+                </tr>
+              ))}
+              <tr className="bg-masters-green/5 font-semibold">
+                <td className="px-4 py-2 text-gray-700">Total</td>
+                <td className="px-4 py-2 text-right font-mono text-gray-700">
+                  {auctionSummary.reduce((s, r) => s + r.golfer_count, 0)}
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-masters-green">
+                  ${auctionSummary.reduce((s, r) => s + r.total_spent, 0).toFixed(2)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Current field */}
       <div className="card overflow-x-auto p-0">

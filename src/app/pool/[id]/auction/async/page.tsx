@@ -1,19 +1,29 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/components/AuthProvider';
 import { Spinner, Money } from '@/components/ui';
 import type { Golfer, AsyncBid, Pool } from '@/types/database';
 
+interface HighBid {
+  golfer_id: string;
+  high_bid: number;
+  high_bidder_id: string;
+  high_bidder_name: string;
+}
+
 interface GolferWithBids extends Golfer {
   myBid: AsyncBid | null;
   highBid: number | null;
+  highBidderName: string | null;
+  highBidderId: string | null;
   isOwned: boolean;
 }
 
 export default function AsyncBiddingPage({ params }: { params: { id: string } }) {
-  const supabase = createClient();
+  const supabaseRef = useRef(createClient());
+  const supabase = supabaseRef.current;
   const { user } = useAuth();
   const [golfers, setGolfers] = useState<GolferWithBids[]>([]);
   const [pool, setPool] = useState<Pool | null>(null);
@@ -32,15 +42,38 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
       supabase.from('ownership').select('golfer_id').eq('pool_id', params.id),
     ]);
     if (poolRes.data) setPool(poolRes.data);
+
     const myBidsMap = new Map((myBidsRes.data ?? []).map((b) => [b.golfer_id, b]));
-    const highBidsMap = new Map((highBidsRes.data ?? []).map((b: any) => [b.golfer_id, Number(b.high_bid)]));
+    const highBidsMap = new Map((highBidsRes.data ?? []).map((b: any) => [b.golfer_id, b as HighBid]));
     const ownedSet = new Set((ownedRes.data ?? []).map((o: any) => o.golfer_id));
-    setGolfers((golfersRes.data ?? []).map((g) => ({
-      ...g,
-      myBid: myBidsMap.get(g.id) ?? null,
-      highBid: highBidsMap.get(g.id) ?? null,
-      isOwned: ownedSet.has(g.id),
-    })));
+
+    const enriched = (golfersRes.data ?? []).map((g) => {
+      const hb = highBidsMap.get(g.id);
+      return {
+        ...g,
+        myBid: myBidsMap.get(g.id) ?? null,
+        highBid: hb ? Number(hb.high_bid) : null,
+        highBidderName: hb?.high_bidder_name ?? null,
+        highBidderId: hb?.high_bidder_id ?? null,
+        isOwned: ownedSet.has(g.id),
+      };
+    });
+
+    setGolfers(enriched);
+
+    // Pre-fill bid inputs with the minimum bid for each golfer
+    setBidAmounts((prev) => {
+      const next = { ...prev };
+      enriched.forEach((g) => {
+        // Only pre-fill if the user hasn't typed anything yet
+        if (!prev[g.id]) {
+          const minBid = g.highBid !== null ? g.highBid + 1 : 1;
+          next[g.id] = String(minBid);
+        }
+      });
+      return next;
+    });
+
     setLoading(false);
   }
 
@@ -49,26 +82,31 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
   const canBid = pool?.status === 'async_bidding';
 
   async function placeBid(golferId: string) {
-    const amount = parseFloat(bidAmounts[golferId]);
-    if (!amount || amount <= 0) {
-      setMessages((m) => ({ ...m, [golferId]: { type: 'error', text: 'Enter a valid amount' } }));
+    const raw = bidAmounts[golferId] ?? '';
+    const amount = parseInt(raw, 10);
+
+    if (!raw || isNaN(amount) || amount <= 0 || String(amount) !== raw.trim()) {
+      setMessages((m) => ({ ...m, [golferId]: { type: 'error', text: 'Enter a whole dollar amount' } }));
       return;
     }
-    setSubmitting(golferId);
-    // Retract old bid first
-    const existing = golfers.find((g) => g.id === golferId)?.myBid;
-    if (existing) {
-      await supabase.from('async_bids').delete().eq('id', existing.id);
+
+    const golfer = golfers.find((g) => g.id === golferId);
+    const minBid = golfer?.highBid !== null && golfer?.highBid !== undefined ? golfer.highBid + 1 : 1;
+    if (amount < minBid) {
+      setMessages((m) => ({ ...m, [golferId]: { type: 'error', text: `Bid must be at least $${minBid}` } }));
+      return;
     }
-    const { error } = await supabase.from('async_bids').insert({
-      pool_id: params.id,
-      golfer_id: golferId,
-      user_id: user!.id,
-      amount,
-      is_max_bid: true,
+
+    setSubmitting(golferId);
+    const res = await fetch(`/api/pools/${params.id}/bids`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ golfer_id: golferId, amount }),
     });
-    if (error) {
-      setMessages((m) => ({ ...m, [golferId]: { type: 'error', text: error.message } }));
+    const json = await res.json();
+
+    if (!res.ok) {
+      setMessages((m) => ({ ...m, [golferId]: { type: 'error', text: json.error ?? 'Failed to place bid' } }));
     } else {
       setMessages((m) => ({ ...m, [golferId]: { type: 'success', text: 'Bid placed!' } }));
       setBidAmounts((a) => ({ ...a, [golferId]: '' }));
@@ -78,10 +116,14 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
     setTimeout(() => setMessages((m) => { const n = { ...m }; delete n[golferId]; return n; }), 3000);
   }
 
-  async function retractBid(bidId: string, golferId: string) {
+  async function retractBid(golferId: string) {
     setSubmitting(golferId);
-    const { error } = await supabase.from('async_bids').delete().eq('id', bidId);
-    if (!error) await load();
+    const res = await fetch(`/api/pools/${params.id}/bids`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ golfer_id: golferId }),
+    });
+    if (res.ok) await load();
     setSubmitting(null);
   }
 
@@ -125,6 +167,9 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
           <tbody>
             {golfers.map((golfer) => {
               const msg = messages[golfer.id];
+              const iAmHighBidder = golfer.highBidderId === user?.id;
+              const minBid = golfer.highBid !== null ? golfer.highBid + 1 : 1;
+
               return (
                 <tr
                   key={golfer.id}
@@ -134,47 +179,83 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
                     <div className="font-medium">{golfer.name}</div>
                     <div className="text-xs text-gray-400">{golfer.country} · #{golfer.world_ranking ?? '?'}</div>
                   </td>
-                  <td className="px-4 py-3 text-right font-mono">
-                    {golfer.highBid ? <Money amount={golfer.highBid} className="text-masters-green" /> : <span className="text-gray-300">—</span>}
-                  </td>
+
+                  {/* Current high bid + bidder name */}
                   <td className="px-4 py-3 text-right">
-                    {golfer.myBid ? (
+                    {golfer.highBid !== null ? (
                       <div className="flex flex-col items-end gap-0.5">
-                        <Money amount={golfer.myBid.amount} className="text-masters-green font-semibold" />
-                        <button
-                          onClick={() => retractBid(golfer.myBid!.id, golfer.id)}
-                          disabled={!!submitting || !canBid}
-                          className="text-xs text-red-500 hover:underline disabled:opacity-40"
-                        >
-                          Retract
-                        </button>
+                        <Money amount={golfer.highBid} className="font-mono text-masters-green" />
+                        <span className="text-xs text-gray-400">{golfer.highBidderName}</span>
                       </div>
                     ) : (
                       <span className="text-gray-300">—</span>
                     )}
                   </td>
+
+                  {/* My bid */}
+                  <td className="px-4 py-3 text-right">
+                    {golfer.myBid ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <Money amount={golfer.myBid.amount} className="text-masters-green font-semibold" />
+                        {iAmHighBidder ? (
+                          <span className="text-xs text-masters-green font-medium">High bid ✓</span>
+                        ) : (
+                          <button
+                            onClick={() => retractBid(golfer.id)}
+                            disabled={!!submitting || !canBid}
+                            className="text-xs text-red-500 hover:underline disabled:opacity-40"
+                          >
+                            Retract
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
+                  </td>
+
+                  {/* Action: input + Place Bid, or Sold badge, or high-bid controls */}
                   <td className="px-4 py-3">
                     {golfer.isOwned ? (
-                      <span className="badge-green text-xs">Sold</span>
+                      <div className="flex justify-end">
+                        <span className="badge-green text-xs">Sold</span>
+                      </div>
                     ) : canBid ? (
-                      <div className="flex items-center gap-2 justify-end">
-                        <input
-                          type="number"
-                          min="1"
-                          step="1"
-                          placeholder="$"
-                          value={bidAmounts[golfer.id] ?? ''}
-                          onChange={(e) => setBidAmounts((a) => ({ ...a, [golfer.id]: e.target.value }))}
-                          className="input w-24 text-right"
-                        />
-                        <button
-                          onClick={() => placeBid(golfer.id)}
-                          disabled={submitting === golfer.id}
-                          className="btn-primary py-1.5 px-3 text-xs flex items-center gap-1"
-                        >
-                          {submitting === golfer.id && <Spinner className="text-white w-3 h-3" />}
-                          Bid
-                        </button>
+                      <div className="flex flex-col items-end gap-1.5">
+                        {iAmHighBidder ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => retractBid(golfer.id)}
+                              disabled={submitting === golfer.id || !canBid}
+                              className="text-xs text-red-500 hover:underline disabled:opacity-40"
+                            >
+                              {submitting === golfer.id ? <Spinner className="text-red-400 w-3 h-3" /> : 'Retract'}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 justify-end">
+                            {/* Dollar-prefixed input */}
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">$</span>
+                              <input
+                                type="number"
+                                min={minBid}
+                                step="1"
+                                value={bidAmounts[golfer.id] ?? ''}
+                                onChange={(e) => setBidAmounts((a) => ({ ...a, [golfer.id]: e.target.value }))}
+                                className="input w-24 text-right pl-5 pr-2"
+                              />
+                            </div>
+                            <button
+                              onClick={() => placeBid(golfer.id)}
+                              disabled={submitting === golfer.id}
+                              className="btn-primary py-1.5 px-3 text-xs flex items-center gap-1"
+                            >
+                              {submitting === golfer.id && <Spinner className="text-white w-3 h-3" />}
+                              Place Bid
+                            </button>
+                          </div>
+                        )}
                         {msg && (
                           <span className={`text-xs ${msg.type === 'error' ? 'text-red-500' : 'text-green-600'}`}>
                             {msg.text}
