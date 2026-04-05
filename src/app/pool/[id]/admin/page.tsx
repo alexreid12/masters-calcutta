@@ -68,8 +68,10 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   // Auction summary
   type AuctionSummaryRow = { user_id: string; display_name: string; golfer_count: number; total_spent: number };
   type BidLeaderRow = { golfer_id: string; golfer_name: string; high_bid: number; high_bidder_name: string };
+  type PotBreakdown = { soldTotal: number; soldCount: number; bidTotal: number; bidCount: number };
   const [auctionSummary, setAuctionSummary] = useState<AuctionSummaryRow[]>([]);
   const [bidLeaders, setBidLeaders] = useState<BidLeaderRow[]>([]);
+  const [potBreakdown, setPotBreakdown] = useState<PotBreakdown | null>(null);
 
   // Share & Privacy
   type MemberWithProfile = PoolMember & { profiles: Pick<Profile, 'display_name' | 'email'> | null };
@@ -86,7 +88,7 @@ export default function AdminPage({ params }: { params: { id: string } }) {
       supabase.from('pools').select('*').eq('id', params.id).single(),
       supabase.from('golfers').select('*').eq('pool_id', params.id).order('world_ranking', { nullsFirst: false }),
       supabase.from('pool_members').select('*, profiles!user_id(display_name, email)').eq('pool_id', params.id),
-      supabase.from('ownership').select('user_id, purchase_price, golfers(name), profiles!user_id(display_name)').eq('pool_id', params.id),
+      supabase.from('ownership').select('user_id, golfer_id, purchase_price, golfers(name), profiles!user_id(display_name)').eq('pool_id', params.id),
       supabase.from('async_high_bids').select('golfer_id, high_bid, high_bidder_name').eq('pool_id', params.id).order('high_bid', { ascending: false }),
     ]);
 
@@ -126,14 +128,22 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     // Bid leaders — look up golfer names from already-fetched golfers array
     // (can't use relational select on a view since views have no FK constraints)
     const golferNameMap = new Map((golfersRes.data ?? []).map((g) => [g.id, g.name]));
-    setBidLeaders(
-      (bidLeadersRes.data ?? []).map((r: any) => ({
-        golfer_id: r.golfer_id,
-        golfer_name: golferNameMap.get(r.golfer_id) ?? 'Unknown',
-        high_bid: Number(r.high_bid),
-        high_bidder_name: r.high_bidder_name ?? '—',
-      }))
-    );
+    const soldGolferIds = new Set(ownershipRows.map((r) => r.golfer_id));
+    const bidLeaderRows = (bidLeadersRes.data ?? []).map((r: any) => ({
+      golfer_id: r.golfer_id,
+      golfer_name: golferNameMap.get(r.golfer_id) ?? 'Unknown',
+      high_bid: Number(r.high_bid),
+      high_bidder_name: r.high_bidder_name ?? '—',
+    }));
+    setBidLeaders(bidLeaderRows);
+
+    // Pot breakdown: sold total from ownership, bid total from unsold high bids
+    const soldTotal = ownershipRows.reduce((s: number, r: any) => s + Number(r.purchase_price), 0);
+    const soldCount = ownershipRows.length;
+    const unsoldBids = bidLeaderRows.filter((r) => !soldGolferIds.has(r.golfer_id));
+    const bidTotal = unsoldBids.reduce((s, r) => s + r.high_bid, 0);
+    const bidCount = unsoldBids.length;
+    setPotBreakdown({ soldTotal, soldCount, bidTotal, bidCount });
 
     setLoading(false);
   }
@@ -359,6 +369,37 @@ export default function AdminPage({ params }: { params: { id: string } }) {
           </div>
         )}
       </div>
+
+      {/* Pot Breakdown */}
+      {potBreakdown && (
+        <div className="card">
+          <h3 className="font-display text-lg text-masters-green mb-3">Prize Pot</h3>
+          <div className="flex flex-wrap gap-6">
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-wide">Total Pot</p>
+              <p className="text-2xl font-display font-semibold text-masters-green">
+                ${(potBreakdown.soldTotal + potBreakdown.bidTotal).toLocaleString()}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-wide">Sold Golfers</p>
+              <p className="text-xl font-mono font-semibold text-gray-700">
+                ${potBreakdown.soldTotal.toLocaleString()}
+                <span className="text-sm text-gray-400 font-normal ml-1">({potBreakdown.soldCount})</span>
+              </p>
+            </div>
+            {(pool?.status === 'async_bidding' || pool?.status === 'live_auction') && potBreakdown.bidCount > 0 && (
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-wide">Active High Bids</p>
+                <p className="text-xl font-mono font-semibold text-gray-700">
+                  ${potBreakdown.bidTotal.toLocaleString()}
+                  <span className="text-sm text-gray-400 font-normal ml-1">({potBreakdown.bidCount} golfers)</span>
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Share & Privacy */}
       <div className="card space-y-4">

@@ -286,7 +286,17 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
 
       {/* ── Center: Active Auction ────────────────────────────────────────── */}
       <div className="lg:order-2 order-2 space-y-4">
-        <h2 className="font-display text-2xl text-masters-green">Live Auction</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-2xl text-masters-green">Live Auction</h2>
+          {pool && (
+            <div className="text-right">
+              <p className="text-xs text-gray-400 uppercase tracking-wide">Current Pot</p>
+              <p className="font-display text-xl font-semibold text-masters-green">
+                ${Number(pool.total_pot).toLocaleString()}
+              </p>
+            </div>
+          )}
+        </div>
 
         {!state.item ? (
           <div className="card text-center py-12">

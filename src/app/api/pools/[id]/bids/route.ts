@@ -73,6 +73,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
+  // ── Pot update (trigger also handles this; explicit call for belt-and-suspenders) ──
+  refreshPot(serviceClient, params.id);
+
   // ── Outbid notification ────────────────────────────────────────────────────
   // If the new bid beats the previous high bidder (a different user), notify them.
   if (prevHighBid && amount > prevHighBid.amount) {
@@ -178,5 +181,25 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     .eq('user_id', user.id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  // ── Pot update ────────────────────────────────────────────────────────────
+  const svc = createServiceClient();
+  refreshPot(svc, params.id);
+
   return NextResponse.json({ success: true });
+}
+
+/** Fire-and-forget pot recalculation via the DB function. The trigger on
+ *  async_bids also handles this; this call is belt-and-suspenders. */
+function refreshPot(serviceClient: ReturnType<typeof createServiceClient>, poolId: string) {
+  void (async () => {
+    try {
+      const { data } = await serviceClient.rpc('calculate_pool_pot', { p_pool_id: poolId });
+      if (data !== null) {
+        await serviceClient.from('pools').update({ total_pot: data }).eq('id', poolId);
+      }
+    } catch (err) {
+      console.error('[bids] pot refresh failed:', err);
+    }
+  })();
 }

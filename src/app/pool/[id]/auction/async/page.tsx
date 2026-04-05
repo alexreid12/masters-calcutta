@@ -27,6 +27,7 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
   const { user } = useAuth();
   const [golfers, setGolfers] = useState<GolferWithBids[]>([]);
   const [pool, setPool] = useState<Pool | null>(null);
+  const [pot, setPot] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [bidAmounts, setBidAmounts] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<string | null>(null);
@@ -41,7 +42,10 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
       supabase.from('async_high_bids').select('*').eq('pool_id', params.id),
       supabase.from('ownership').select('golfer_id').eq('pool_id', params.id),
     ]);
-    if (poolRes.data) setPool(poolRes.data);
+    if (poolRes.data) {
+      setPool(poolRes.data);
+      setPot(Number(poolRes.data.total_pot ?? 0));
+    }
 
     const myBidsMap = new Map((myBidsRes.data ?? []).map((b) => [b.golfer_id, b]));
     const highBidsMap = new Map((highBidsRes.data ?? []).map((b: any) => [b.golfer_id, b as HighBid]));
@@ -77,7 +81,21 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [user]);
+  useEffect(() => {
+    load();
+
+    // Subscribe to pool total_pot updates pushed by the DB trigger
+    const channel = supabase
+      .channel(`pool:${params.id}:pot`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'pools', filter: `id=eq.${params.id}` },
+        (payload: any) => setPot(Number(payload.new.total_pot ?? 0))
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user]);
 
   const canBid = pool?.status === 'async_bidding';
 
@@ -154,6 +172,20 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
           </p>
         )}
       </div>
+
+      {/* Running pot total */}
+      <div className="flex items-center gap-4 bg-masters-green/5 border border-masters-green/20 rounded-xl px-4 py-3 mb-4">
+        <div>
+          <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold">Current Pot</p>
+          <p className="font-display text-2xl font-semibold text-masters-green">
+            ${pot.toLocaleString()}
+          </p>
+        </div>
+        <p className="text-xs text-gray-400 leading-snug max-w-xs">
+          Sum of all current high bids. Updates live as bids come in.
+        </p>
+      </div>
+
       <p className="text-sm text-gray-500 mb-4">
         Place your max bids below. High bids become floor prices in the live auction.
         You can retract and rebid at any time before the deadline.
