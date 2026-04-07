@@ -6,7 +6,10 @@ import { AuthProvider } from '@/components/AuthProvider';
 
 export const metadata: Metadata = {
   title: 'Masters Calcutta Pool',
-  description: 'Auction-style fantasy golf pool for The Masters Tournament',
+  description: 'Auction-style fantasy pool for The Masters golf tournament',
+  icons: {
+    icon: '/favicon.svg',
+  },
 };
 
 export default function RootLayout({
