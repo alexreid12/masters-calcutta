@@ -113,10 +113,14 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
   useEffect(() => {
     load();
     const channel = supabase
-      .channel(`pool:${params.id}:pot`)
+      .channel(`pool:${params.id}:bids`)
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'pools', filter: `id=eq.${params.id}` },
         (payload: any) => setPot(Number(payload.new.total_pot ?? 0))
+      )
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'async_bids', filter: `pool_id=eq.${params.id}` },
+        () => load()
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
