@@ -55,6 +55,12 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   const [espnLoading, setEspnLoading] = useState(false);
   const [espnResult, setEspnResult] = useState<{ text: string; ok: boolean } | null>(null);
 
+  // ESPN ID sync
+  const [syncLoading, setSyncLoading] = useState(false);
+  type SyncResult = { matched: number; total: number; unmatched: string[]; eventName: string };
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
   // Manual score refresh
   const [refreshLoading, setRefreshLoading] = useState(false);
   const [refreshResult, setRefreshResult] = useState<{ text: string; ok: boolean } | null>(null);
@@ -226,6 +232,26 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     } finally {
       setEspnLoading(false);
       setTimeout(() => setEspnResult(null), 8000);
+    }
+  }
+
+  async function handleSyncEspnIds() {
+    setSyncLoading(true);
+    setSyncResult(null);
+    setSyncError(null);
+    try {
+      const res = await fetch(`/api/pools/${params.id}/sync-espn-ids`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        setSyncError(data.error ?? 'Sync failed');
+      } else {
+        setSyncResult(data);
+        await load();
+      }
+    } catch {
+      setSyncError('Network error — try again');
+    } finally {
+      setSyncLoading(false);
     }
   }
 
@@ -600,6 +626,50 @@ export default function AdminPage({ params }: { params: { id: string } }) {
           <p className={`text-sm mt-3 font-medium ${espnResult.ok ? 'text-masters-green' : 'text-red-500'}`}>
             {espnResult.text}
           </p>
+        )}
+      </div>
+
+      {/* Sync ESPN IDs */}
+      <div className="card">
+        <div className="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <h3 className="font-display text-lg text-masters-green">Sync ESPN IDs</h3>
+            <p className="text-xs text-gray-500 mt-1 max-w-lg">
+              Matches golfers in your field to ESPN&apos;s Masters field by name and writes their ESPN player IDs.
+              Does not create or delete golfers — only updates IDs on existing ones.
+            </p>
+          </div>
+          <button
+            onClick={handleSyncEspnIds}
+            disabled={syncLoading}
+            className="btn-outline flex items-center gap-2 shrink-0"
+          >
+            {syncLoading && <Spinner className="text-masters-green w-4 h-4" />}
+            Sync ESPN IDs
+          </button>
+        </div>
+        {syncError && (
+          <p className="text-sm text-red-500 mt-3">{syncError}</p>
+        )}
+        {syncResult && (
+          <div className="mt-3 pt-3 border-t border-masters-cream-dark space-y-2">
+            <p className="text-sm font-medium text-masters-green">
+              Matched {syncResult.matched} of {syncResult.total} golfers
+              <span className="font-normal text-gray-400 ml-1">({syncResult.eventName})</span>
+            </p>
+            {syncResult.unmatched.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  Unmatched ({syncResult.unmatched.length}) — set ESPN IDs manually:
+                </p>
+                <ul className="text-xs text-gray-600 space-y-0.5">
+                  {syncResult.unmatched.map((name) => (
+                    <li key={name} className="font-mono">· {name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
