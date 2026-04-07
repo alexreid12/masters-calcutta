@@ -124,7 +124,8 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const canBid = pool?.status === 'async_bidding';
 

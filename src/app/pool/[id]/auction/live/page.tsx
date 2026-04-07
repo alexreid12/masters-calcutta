@@ -137,8 +137,8 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
 
   async function placeBid() {
     if (!state.item) return;
-    const amount = parseFloat(bidAmount);
-    if (!amount || amount < minBid) {
+    const amount = parseInt(bidAmount, 10);
+    if (isNaN(amount) || amount < minBid) {
       setError(`Minimum bid is $${minBid}`);
       return;
     }
@@ -200,13 +200,16 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     }
 
     if (state.item.current_bidder_id) {
-      await supabase.from('ownership').insert({
+      const { error: insertError } = await supabase.from('ownership').insert({
         pool_id: params.id,
         golfer_id: state.item.golfer_id,
         user_id: state.item.current_bidder_id,
         purchase_price: state.item.current_bid,
         acquired_via: 'live_auction',
       });
+      if (insertError) {
+        setError(`Golfer marked sold but ownership record failed — notify commissioner. (${insertError.message})`);
+      }
     }
   }
 
