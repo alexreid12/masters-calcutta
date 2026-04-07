@@ -15,15 +15,11 @@ interface AuctionState {
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
   open: 'Bidding Open',
-  going_once: 'Going Once...',
-  going_twice: 'Going Twice...',
   sold: 'SOLD',
 };
 
 const STATUS_COLORS: Record<string, string> = {
   open: 'text-green-600',
-  going_once: 'text-yellow-600',
-  going_twice: 'text-orange-600',
   sold: 'text-red-600',
 };
 
@@ -52,7 +48,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
         .from('live_auction')
         .select('*, golfers(*), profiles!current_bidder_id(*)')
         .eq('pool_id', params.id)
-        .in('status', ['open', 'going_once', 'going_twice'])
+        .eq('status', 'open')
         .order('opened_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
@@ -186,30 +182,24 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     });
   }
 
-  async function advanceStatus() {
+  async function sellGolfer() {
     if (!state.item) return;
-    const next: Record<string, string> = {
-      open: 'going_once',
-      going_once: 'going_twice',
-      going_twice: 'sold',
-    };
-    const nextStatus = next[state.item.status];
-    if (!nextStatus) return;
 
-    const update: Record<string, unknown> = { status: nextStatus };
-    if (nextStatus === 'sold') update.sold_at = new Date().toISOString();
+    if (!state.item.current_bidder_id) {
+      if (!confirm('No bids on this golfer. Skip and move to next?')) return;
+    }
 
     const { error: updateError } = await supabase
       .from('live_auction')
-      .update(update)
+      .update({ status: 'sold', sold_at: new Date().toISOString() })
       .eq('id', state.item.id);
 
     if (updateError) {
-      setError('Failed to advance status — try again.');
+      setError('Failed to sell golfer — try again.');
       return;
     }
 
-    if (nextStatus === 'sold' && state.item.current_bidder_id) {
+    if (state.item.current_bidder_id) {
       await supabase.from('ownership').insert({
         pool_id: params.id,
         golfer_id: state.item.golfer_id,
@@ -218,11 +208,6 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
         acquired_via: 'live_auction',
       });
     }
-  }
-
-  async function resetStatus() {
-    if (!state.item) return;
-    await supabase.from('live_auction').update({ status: 'open' }).eq('id', state.item.id);
   }
 
   const quickBidAmounts = [minBid, minBid + 5, minBid + 10, minBid + 25, minBid + 50].filter(
@@ -308,10 +293,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
           <div
             key={flashKey}
             className={`card border-2 bid-flash ${
-              state.item.status === 'going_once' ? 'border-yellow-400' :
-              state.item.status === 'going_twice' ? 'border-orange-400' :
-              state.item.status === 'sold' ? 'border-red-400' :
-              'border-masters-green'
+              state.item.status === 'sold' ? 'border-red-400' : 'border-masters-green'
             }`}
           >
             {/* Golfer info */}
@@ -403,25 +385,12 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
             )}
 
             {/* Commissioner controls */}
-            {isCommissioner && (
+            {isCommissioner && state.item.status !== 'sold' && (
               <div className="border-t border-masters-cream-dark pt-4 mt-4">
                 <p className="text-xs text-gray-400 uppercase tracking-wide mb-2">Commissioner Controls</p>
-                <div className="flex flex-wrap gap-2">
-                  {state.item.status !== 'sold' && (
-                    <>
-                      <button onClick={advanceStatus} className="btn-primary text-sm">
-                        {state.item.status === 'open' ? 'Going Once →' :
-                         state.item.status === 'going_once' ? 'Going Twice →' :
-                         'SOLD ✓'}
-                      </button>
-                      {state.item.status !== 'open' && (
-                        <button onClick={resetStatus} className="btn-outline text-sm">
-                          ← Reset to Open
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
+                <button onClick={sellGolfer} className="btn-primary text-sm">
+                  SOLD ✓
+                </button>
               </div>
             )}
           </div>
