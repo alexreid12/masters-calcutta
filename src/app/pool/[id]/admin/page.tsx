@@ -67,6 +67,12 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   const [enrichResult, setEnrichResult] = useState<EnrichResult | null>(null);
   const [enrichError, setEnrichError] = useState<string | null>(null);
 
+  // Fix amateurs
+  const [fixAmateursLoading, setFixAmateursLoading] = useState(false);
+  type FixAmateursResult = { reset: number; matched: string[]; notFound: string[] };
+  const [fixAmateursResult, setFixAmateursResult] = useState<FixAmateursResult | null>(null);
+  const [fixAmateursError, setFixAmateursError] = useState<string | null>(null);
+
   // Manual score refresh
   const [refreshLoading, setRefreshLoading] = useState(false);
   const [refreshResult, setRefreshResult] = useState<{ text: string; ok: boolean } | null>(null);
@@ -278,6 +284,26 @@ export default function AdminPage({ params }: { params: { id: string } }) {
       setEnrichError('Network error — try again');
     } finally {
       setEnrichLoading(false);
+    }
+  }
+
+  async function handleFixAmateurs() {
+    setFixAmateursLoading(true);
+    setFixAmateursResult(null);
+    setFixAmateursError(null);
+    try {
+      const res = await fetch(`/api/pools/${params.id}/fix-amateurs`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        setFixAmateursError(data.error ?? 'Fix failed');
+      } else {
+        setFixAmateursResult(data);
+        await load();
+      }
+    } catch {
+      setFixAmateursError('Network error — try again');
+    } finally {
+      setFixAmateursLoading(false);
     }
   }
 
@@ -736,6 +762,54 @@ export default function AdminPage({ params }: { params: { id: string } }) {
                 </p>
                 <ul className="text-xs text-gray-600 space-y-0.5">
                   {enrichResult.notFoundNames.map((name) => (
+                    <li key={name} className="font-mono">· {name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Fix amateur status */}
+      <div className="card">
+        <div className="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <h3 className="font-display text-lg text-masters-green">Fix Amateur Status</h3>
+            <p className="text-xs text-gray-500 mt-1 max-w-lg">
+              Resets all golfers to professional, then marks the 6 known 2026 Masters amateurs.
+              Run once after importing the field.
+            </p>
+          </div>
+          <button
+            onClick={handleFixAmateurs}
+            disabled={fixAmateursLoading}
+            className="btn-outline flex items-center gap-2 shrink-0"
+          >
+            {fixAmateursLoading && <Spinner className="text-masters-green w-4 h-4" />}
+            Fix Amateurs
+          </button>
+        </div>
+        {fixAmateursError && (
+          <p className="text-sm text-red-500 mt-3">{fixAmateursError}</p>
+        )}
+        {fixAmateursResult && (
+          <div className="mt-3 pt-3 border-t border-masters-cream-dark space-y-2">
+            <p className="text-sm font-medium text-masters-green">
+              Reset {fixAmateursResult.reset} golfers · Marked {fixAmateursResult.matched.length} as amateur
+            </p>
+            {fixAmateursResult.matched.length > 0 && (
+              <p className="text-xs text-gray-600">
+                Amateurs: {fixAmateursResult.matched.join(', ')}
+              </p>
+            )}
+            {fixAmateursResult.notFound.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-yellow-700 uppercase tracking-wide mb-1">
+                  Not found in pool — check spelling:
+                </p>
+                <ul className="text-xs text-gray-600 space-y-0.5">
+                  {fixAmateursResult.notFound.map((name) => (
                     <li key={name} className="font-mono">· {name}</li>
                   ))}
                 </ul>
