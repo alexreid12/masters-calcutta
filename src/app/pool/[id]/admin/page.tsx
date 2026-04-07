@@ -352,7 +352,7 @@ export default function AdminPage({ params }: { params: { id: string } }) {
         </div>
         {pool?.status === 'tournament_active' && (
           <div className="mt-3 pt-3 border-t border-masters-cream-dark">
-            <p className="text-xs text-gray-400 mb-2">Cron polls ESPN every 2 min via Vercel. Force a refresh manually:</p>
+            <p className="text-xs text-gray-400 mb-2">Cron refreshes scores once daily (10 PM UTC). Force a refresh manually during tournament rounds:</p>
             <button
               onClick={handleRefreshScores}
               disabled={refreshLoading}

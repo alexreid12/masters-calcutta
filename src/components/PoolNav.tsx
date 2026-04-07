@@ -41,6 +41,11 @@ function getTabs(poolId: string): Tab[] {
       statuses: ['tournament_active','completed'],
     },
     {
+      label: 'Standings',
+      href: `/pool/${poolId}/standings`,
+      statuses: ['tournament_active','completed'],
+    },
+    {
       label: 'My Portfolio',
       href: `/pool/${poolId}/portfolio`,
       statuses: ['locked','tournament_active','completed'],

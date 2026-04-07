@@ -110,12 +110,29 @@ export async function updateScoresForPool(
     if (comp.athlete.amateur === true && !dbGolfer.is_amateur) {
       golferUpdate.is_amateur = true;
     }
-    await supabase.from('golfers').update(golferUpdate).eq('id', dbGolfer.id);
+    const { error: golferErr } = await supabase
+      .from('golfers')
+      .update(golferUpdate)
+      .eq('id', dbGolfer.id);
+    if (golferErr) {
+      console.error('[score-updater] golfer update error:', golferErr.message);
+    }
 
     // Upsert completed round scores from linescores
     const roundScores = parseRoundScores(comp);
+
+    // Position lives on the most-recently-known round (which may be the
+    // in-progress round, or the last completed round if between rounds).
+    // ESPN's `period` can jump ahead of available linescores (e.g. period=3
+    // before round 3 tees off), so we fall back to the last round with data.
+    const lastKnownRound =
+      roundScores.find((rs) => rs.round === currentRound)?.round ??
+      roundScores[roundScores.length - 1]?.round ??
+      currentRound;
+
     for (const rs of roundScores) {
       const isCurrentRound = rs.round === currentRound;
+      const isLastKnownRound = rs.round === lastKnownRound;
       const { error } = await supabase.from('scores').upsert(
         {
           pool_id: poolId,
@@ -124,8 +141,8 @@ export async function updateScoresForPool(
           score_to_par: rs.score_to_par,
           total_to_par: totalToPar,
           thru: isCurrentRound ? thru : 18,           // completed rounds are F (18)
-          position: isCurrentRound ? position : null,
-          position_display: isCurrentRound ? posDisplay : null,
+          position: isLastKnownRound ? position : null,
+          position_display: isLastKnownRound ? posDisplay : null,
           is_active: golferStatus === 'active',
           updated_at: new Date().toISOString(),
         },

@@ -15,7 +15,7 @@ function ordinal(n: number): string {
 export default async function PoolDashboardPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
 
-  const [poolRes, statsRes, recentSalesRes, leaderRes, rulesRes] = await Promise.all([
+  const [poolRes, statsRes, soldCountRes, recentSalesRes, leaderRes, rulesRes] = await Promise.all([
     supabase
       .from('pools')
       .select('*, profiles!commissioner_id(display_name)')
@@ -24,6 +24,10 @@ export default async function PoolDashboardPage({ params }: { params: { id: stri
     supabase
       .from('golfers')
       .select('id, status')
+      .eq('pool_id', params.id),
+    supabase
+      .from('ownership')
+      .select('id', { count: 'exact', head: true })
       .eq('pool_id', params.id),
     supabase
       .from('ownership')
@@ -56,7 +60,7 @@ export default async function PoolDashboardPage({ params }: { params: { id: stri
   const specialRules = allRules.filter((r) => r.rule_type !== 'position');
 
   const totalGolfers = golfers.length;
-  const soldGolfers = recentSales.length;
+  const soldGolfers = soldCountRes.count ?? 0;
 
   const statusTimeline: { label: string; status: string; current: boolean }[] = [
     { label: 'Setup', status: 'setup', current: pool.status === 'setup' },

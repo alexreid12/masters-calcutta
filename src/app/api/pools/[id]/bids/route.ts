@@ -51,15 +51,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     ? { user_id: (currentHigh as any).high_bidder_id as string, amount: Number(currentHigh.high_bid) }
     : null;
 
-  // Remove existing bid from this user for this golfer, then insert new one
-  await supabase
+  // Replace any existing bid from this user on this golfer, then insert the new one.
+  // Uses service client so this works even after the user-facing DELETE RLS policy
+  // was intentionally removed (bids are permanent from the user's perspective;
+  // only the server can swap them out when a higher bid is placed).
+  await serviceClient
     .from('async_bids')
     .delete()
     .eq('pool_id', params.id)
     .eq('golfer_id', golfer_id)
     .eq('user_id', user.id);
 
-  const { data, error } = await supabase
+  const { data, error } = await serviceClient
     .from('async_bids')
     .insert({
       pool_id: params.id,
@@ -167,27 +170,6 @@ async function notifyOutbid({
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const { golfer_id } = await req.json();
-  const { error } = await supabase
-    .from('async_bids')
-    .delete()
-    .eq('pool_id', params.id)
-    .eq('golfer_id', golfer_id)
-    .eq('user_id', user.id);
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  // ── Pot update ────────────────────────────────────────────────────────────
-  const svc = createServiceClient();
-  refreshPot(svc, params.id);
-
-  return NextResponse.json({ success: true });
-}
 
 /** Fire-and-forget pot recalculation via the DB function. The trigger on
  *  async_bids also handles this; this call is belt-and-suspenders. */
