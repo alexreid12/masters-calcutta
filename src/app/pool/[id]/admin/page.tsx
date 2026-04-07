@@ -61,6 +61,12 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
 
+  // Enrich field (rankings + amateur status)
+  const [enrichLoading, setEnrichLoading] = useState(false);
+  type EnrichResult = { updated: number; notFound: number; notFoundNames: string[] };
+  const [enrichResult, setEnrichResult] = useState<EnrichResult | null>(null);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
+
   // Manual score refresh
   const [refreshLoading, setRefreshLoading] = useState(false);
   const [refreshResult, setRefreshResult] = useState<{ text: string; ok: boolean } | null>(null);
@@ -252,6 +258,26 @@ export default function AdminPage({ params }: { params: { id: string } }) {
       setSyncError('Network error — try again');
     } finally {
       setSyncLoading(false);
+    }
+  }
+
+  async function handleEnrichField() {
+    setEnrichLoading(true);
+    setEnrichResult(null);
+    setEnrichError(null);
+    try {
+      const res = await fetch(`/api/pools/${params.id}/enrich-field`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        setEnrichError(data.error ?? 'Enrich failed');
+      } else {
+        setEnrichResult(data);
+        await load();
+      }
+    } catch {
+      setEnrichError('Network error — try again');
+    } finally {
+      setEnrichLoading(false);
     }
   }
 
@@ -664,6 +690,52 @@ export default function AdminPage({ params }: { params: { id: string } }) {
                 </p>
                 <ul className="text-xs text-gray-600 space-y-0.5">
                   {syncResult.unmatched.map((name) => (
+                    <li key={name} className="font-mono">· {name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Enrich field: rankings + amateur status */}
+      <div className="card">
+        <div className="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <h3 className="font-display text-lg text-masters-green">Enrich Field (Rankings &amp; Amateur Status)</h3>
+            <p className="text-xs text-gray-500 mt-1 max-w-lg">
+              Updates world rankings and amateur status for all golfers using the hardcoded 2025 Masters field data.
+              Matches by normalized name. Safe to run once after importing from ESPN.
+            </p>
+          </div>
+          <button
+            onClick={handleEnrichField}
+            disabled={enrichLoading}
+            className="btn-outline flex items-center gap-2 shrink-0"
+          >
+            {enrichLoading && <Spinner className="text-masters-green w-4 h-4" />}
+            Enrich Field
+          </button>
+        </div>
+        {enrichError && (
+          <p className="text-sm text-red-500 mt-3">{enrichError}</p>
+        )}
+        {enrichResult && (
+          <div className="mt-3 pt-3 border-t border-masters-cream-dark space-y-2">
+            <p className="text-sm font-medium text-masters-green">
+              Updated {enrichResult.updated} golfers.
+              {enrichResult.notFound > 0 && (
+                <span className="text-gray-500 font-normal ml-1">{enrichResult.notFound} not matched.</span>
+              )}
+            </p>
+            {enrichResult.notFoundNames.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  Not found in your pool — check spelling:
+                </p>
+                <ul className="text-xs text-gray-600 space-y-0.5">
+                  {enrichResult.notFoundNames.map((name) => (
                     <li key={name} className="font-mono">· {name}</li>
                   ))}
                 </ul>
