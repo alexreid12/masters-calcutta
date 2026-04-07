@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { createClient } from '@/lib/supabase/server';
 import { notFound } from 'next/navigation';
-import { GolferStatusBadge, Money } from '@/components/ui';
+import { GolferStatusBadge, Money, AmateurBadge } from '@/components/ui';
 
 export default async function FieldPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
@@ -60,6 +60,7 @@ export default async function FieldPage({ params }: { params: { id: string } }) 
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
                       <span className="font-medium">{golfer.name}</span>
+                      <AmateurBadge isAmateur={golfer.is_amateur} />
                       <GolferStatusBadge status={golfer.status} />
                     </div>
                   </td>

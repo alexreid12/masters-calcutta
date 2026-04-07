@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/components/AuthProvider';
-import { Spinner, Money } from '@/components/ui';
+import { Spinner, Money, AmateurBadge } from '@/components/ui';
 import { MastersFlag, type FlagStatus } from '@/components/MastersFlag';
 import type { Golfer, AsyncBid, Pool } from '@/types/database';
 
@@ -307,7 +307,9 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
                     <div className="flex items-center gap-2 min-w-0">
                       <MastersFlag status={flagStatus(g)} size={16} />
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{g.name}</p>
+                        <p className="text-sm font-medium truncate">
+                          {g.name}<AmateurBadge isAmateur={g.is_amateur} />
+                        </p>
                         {g.highBid !== null && (
                           <p className="text-xs text-gray-500">
                             ${g.highBid} — {g.highBidderName}
@@ -433,7 +435,9 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5">
                       <div>
-                        <div className="font-medium">{golfer.name}</div>
+                        <div className="font-medium">
+                          {golfer.name}<AmateurBadge isAmateur={golfer.is_amateur} />
+                        </div>
                         <div className="text-xs text-gray-400">{golfer.country} · #{golfer.world_ranking ?? '?'}</div>
                       </div>
                       <button

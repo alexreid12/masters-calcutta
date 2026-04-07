@@ -66,6 +66,12 @@ export function Money({ amount, className }: { amount: number; className?: strin
   return <span className={cn('font-mono', className)}>{formatted}</span>;
 }
 
+// ── AmateurBadge ──────────────────────────────────────────────────────────────
+export function AmateurBadge({ isAmateur }: { isAmateur: boolean }) {
+  if (!isAmateur) return null;
+  return <span className="text-[0.85em] text-gray-400 ml-1">(A)</span>;
+}
+
 // ── GolferStatusBadge ─────────────────────────────────────────────────────────
 export function GolferStatusBadge({ status }: { status: string }) {
   if (status === 'active') return null;

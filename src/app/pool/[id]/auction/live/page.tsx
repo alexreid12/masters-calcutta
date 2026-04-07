@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/components/AuthProvider';
-import { Spinner, Money } from '@/components/ui';
+import { Spinner, Money, AmateurBadge } from '@/components/ui';
 import type { LiveAuctionItem, Golfer, Profile, Pool } from '@/types/database';
 
 interface AuctionState {
@@ -259,7 +259,9 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
                     key={s.id}
                     className={`flex items-center justify-between py-1.5 border-b border-masters-cream-dark last:border-0 ${winFlash && s === myGolfers[0] ? 'text-masters-green font-semibold' : ''}`}
                   >
-                    <span className="text-sm font-medium">{s.golfer?.name}</span>
+                    <span className="text-sm font-medium">
+                      {s.golfer?.name}<AmateurBadge isAmateur={s.golfer?.is_amateur ?? false} />
+                    </span>
                     <Money amount={s.current_bid} className="text-masters-green text-sm font-mono" />
                   </div>
                 ))}
@@ -301,6 +303,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
               <div>
                 <h3 className="font-display text-2xl font-semibold text-masters-green">
                   {state.item.golfer?.name}
+                  <AmateurBadge isAmateur={state.item.golfer?.is_amateur ?? false} />
                 </h3>
                 <p className="text-gray-500 text-sm mt-0.5">
                   {state.item.golfer?.country} · #{state.item.golfer?.world_ranking ?? '?'} World Ranking
@@ -415,7 +418,9 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
                   className="flex items-center justify-between px-4 py-2 border-b border-masters-cream-dark last:border-0 hover:bg-gray-50"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{g.name}</p>
+                    <p className="text-sm font-medium truncate">
+                      {g.name}<AmateurBadge isAmateur={g.is_amateur} />
+                    </p>
                     <p className="text-xs text-gray-400">#{g.world_ranking ?? '?'}</p>
                   </div>
                   {isCommissioner && !state.item && (
@@ -447,7 +452,9 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
                   className="flex items-center justify-between px-4 py-2 border-b border-masters-cream-dark last:border-0"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{s.golfer?.name}</p>
+                    <p className="text-sm font-medium truncate">
+                      {s.golfer?.name}<AmateurBadge isAmateur={s.golfer?.is_amateur ?? false} />
+                    </p>
                     <p className="text-xs text-gray-400 truncate">{s.owner?.display_name ?? '—'}</p>
                   </div>
                   <Money amount={s.current_bid} className="text-masters-green text-sm font-mono ml-2 shrink-0" />

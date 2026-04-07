@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { ScoreDisplay, GolferStatusBadge, Spinner } from '@/components/ui';
+import { ScoreDisplay, GolferStatusBadge, Spinner, AmateurBadge } from '@/components/ui';
 import { calculatePayouts } from '@/lib/payout-engine';
 import type { LeaderboardEntry, PayoutRule, Ownership, Score, Golfer } from '@/types/database';
 
@@ -22,6 +22,7 @@ export default function LeaderboardPage({ params }: { params: { id: string } }) 
   const [loading, setLoading] = useState(true);
   const [flashedIds, setFlashedIds] = useState<Set<string>>(new Set());
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [amateurIds, setAmateurIds] = useState<Set<string>>(new Set());
 
   // Payouts
   const [payoutMap, setPayoutMap] = useState<Map<string, number>>(new Map());
@@ -80,6 +81,7 @@ export default function LeaderboardPage({ params }: { params: { id: string } }) 
     const ownerships = (ownershipsRes.data ?? []) as Ownership[];
     const scores = (scoresRes.data ?? []) as Score[];
     const golfers = (golfersRes.data ?? []) as Golfer[];
+    setAmateurIds(new Set(golfers.filter((g) => g.is_amateur).map((g) => g.id)));
 
     setEntries((prev) => {
       const prevMap = new Map(prev.map((e) => [e.golfer_id, e.total_to_par]));
@@ -171,6 +173,7 @@ export default function LeaderboardPage({ params }: { params: { id: string } }) 
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 flex-wrap">
                     <span className="font-medium">{entry.name}</span>
+                    <AmateurBadge isAmateur={amateurIds.has(entry.golfer_id)} />
                     <GolferStatusBadge status={entry.golfer_status} />
                     {entry.country && <span className="text-gray-400 text-xs">{entry.country}</span>}
                   </div>

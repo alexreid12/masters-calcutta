@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Spinner, ScoreDisplay } from '@/components/ui';
+import { Spinner, ScoreDisplay, AmateurBadge } from '@/components/ui';
 import { calculatePayouts } from '@/lib/payout-engine';
 import type { LeaderboardEntry, PayoutRule, Ownership, Score, Golfer } from '@/types/database';
 
@@ -15,6 +15,7 @@ interface OwnerStanding {
   golfers: {
     golfer_id: string;
     name: string;
+    isAmateur: boolean;
     purchasePrice: number;
     totalToPar: number | null;
     positionDisplay: string | null;
@@ -93,6 +94,7 @@ export default function StandingsPage({ params }: { params: { id: string } }) {
     // Build leaderboard lookup
     const lbMap = new Map(leaderboard.map((e) => [e.golfer_id, e]));
     const golferNameMap = new Map(golfers.map((g) => [g.id, g.name]));
+    const golferAmateurMap = new Map(golfers.map((g) => [g.id, g.is_amateur]));
 
     // Group by owner
     const ownerMap = new Map<string, OwnerStanding>();
@@ -121,6 +123,7 @@ export default function StandingsPage({ params }: { params: { id: string } }) {
       entry.golfers.push({
         golfer_id: ownership.golfer_id,
         name: golferNameMap.get(ownership.golfer_id) ?? ownership.golfer_id,
+        isAmateur: golferAmateurMap.get(ownership.golfer_id) ?? false,
         purchasePrice: ownership.purchase_price,
         totalToPar: lb?.total_to_par ?? null,
         positionDisplay: lb?.position_display ?? null,
@@ -265,7 +268,9 @@ export default function StandingsPage({ params }: { params: { id: string } }) {
                       <tbody>
                         {owner.golfers.map((g) => (
                           <tr key={g.golfer_id} className={`border-t border-gray-50 ${g.golferStatus !== 'active' ? 'opacity-60' : ''}`}>
-                            <td className="px-4 py-2 font-medium">{g.name}</td>
+                            <td className="px-4 py-2 font-medium">
+                              {g.name}<AmateurBadge isAmateur={g.isAmateur} />
+                            </td>
                             <td className="px-4 py-2 text-center font-mono text-gray-500 text-xs">
                               {g.positionDisplay ?? (g.position ? ordinal(g.position) : '—')}
                             </td>

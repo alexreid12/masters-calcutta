@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import { ScoreDisplay, Money, GolferStatusBadge } from '@/components/ui';
+import { ScoreDisplay, Money, GolferStatusBadge, AmateurBadge } from '@/components/ui';
 
 export default async function PortfolioPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
@@ -52,7 +52,9 @@ export default async function PortfolioPage({ params }: { params: { id: string }
               >
                 <div className="flex items-start justify-between mb-2">
                   <div>
-                    <h3 className="font-display text-lg font-semibold text-masters-green">{golfer?.name}</h3>
+                    <h3 className="font-display text-lg font-semibold text-masters-green">
+                      {golfer?.name}<AmateurBadge isAmateur={golfer?.is_amateur ?? false} />
+                    </h3>
                     <p className="text-xs text-gray-400">{golfer?.country}</p>
                   </div>
                   <GolferStatusBadge status={golfer?.status ?? 'active'} />
