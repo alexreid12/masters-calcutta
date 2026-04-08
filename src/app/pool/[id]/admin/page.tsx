@@ -5,7 +5,8 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/components/AuthProvider';
 import { useRouter } from 'next/navigation';
 import { Spinner } from '@/components/ui';
-import type { Pool, Golfer, PoolStatus, PoolMember, Profile } from '@/types/database';
+import { calculatePayouts } from '@/lib/payout-engine';
+import type { Pool, Golfer, PoolStatus, PoolMember, Profile, LeaderboardEntry, PayoutRule, Score, Ownership } from '@/types/database';
 import Papa from 'papaparse';
 import Link from 'next/link';
 
@@ -91,6 +92,18 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   const [bidLeaders, setBidLeaders] = useState<BidLeaderRow[]>([]);
   const [potBreakdown, setPotBreakdown] = useState<PotBreakdown | null>(null);
 
+  // Pool Financials
+  type FinancialsRow = {
+    user_id: string;
+    display_name: string;
+    golfers: { name: string; price: number }[];
+    totalBuyIn: number;
+    projectedPayout: number | null;
+    netProfit: number | null;
+  };
+  const [financials, setFinancials] = useState<FinancialsRow[]>([]);
+  const [financialsOpen, setFinancialsOpen] = useState(true);
+
   // Share & Privacy
   type MemberWithProfile = PoolMember & { profiles: Pick<Profile, 'display_name' | 'email'> | null };
   const [members, setMembers] = useState<MemberWithProfile[]>([]);
@@ -102,12 +115,15 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   const [linkCopied, setLinkCopied] = useState(false);
 
   async function load() {
-    const [poolRes, golfersRes, membersRes, ownershipRes, bidLeadersRes] = await Promise.all([
+    const [poolRes, golfersRes, membersRes, ownershipRes, bidLeadersRes, leaderboardRes, rulesRes, scoresRes] = await Promise.all([
       supabase.from('pools').select('*').eq('id', params.id).single(),
       supabase.from('golfers').select('*').eq('pool_id', params.id).order('world_ranking', { nullsFirst: false }),
       supabase.from('pool_members').select('*, profiles!user_id(display_name, email)').eq('pool_id', params.id),
       supabase.from('ownership').select('user_id, golfer_id, purchase_price, golfers(name), profiles!user_id(display_name)').eq('pool_id', params.id),
       supabase.from('async_high_bids').select('golfer_id, high_bid, high_bidder_name').eq('pool_id', params.id).order('high_bid', { ascending: false }),
+      supabase.from('leaderboard').select('*').eq('pool_id', params.id).order('total_to_par', { ascending: true, nullsFirst: false }),
+      supabase.from('payout_rules').select('*').eq('pool_id', params.id).eq('is_active', true),
+      supabase.from('scores').select('*').eq('pool_id', params.id),
     ]);
 
     if (poolRes.data) {
@@ -162,6 +178,78 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     const bidTotal = unsoldBids.reduce((s, r) => s + r.high_bid, 0);
     const bidCount = unsoldBids.length;
     setPotBreakdown({ soldTotal, soldCount, bidTotal, bidCount });
+
+    // ── Pool Financials ───────────────────────────────────────────────────────
+    const leaderboard = (leaderboardRes.data ?? []) as LeaderboardEntry[];
+    const rules = (rulesRes.data ?? []) as PayoutRule[];
+    const scores = (scoresRes.data ?? []) as Score[];
+    const hasScores = leaderboard.some((e) => e.total_to_par !== null);
+
+    // Calculate projected payouts per golfer if scores exist
+    const golferPayoutMap = new Map<string, number>();
+    if (hasScores && rules.length > 0 && poolRes.data) {
+      const ownershipsForCalc = ownershipRows.map((r: any) => ({
+        id: '',
+        pool_id: params.id,
+        golfer_id: r.golfer_id,
+        user_id: r.user_id,
+        purchase_price: Number(r.purchase_price),
+        acquired_via: 'live_auction',
+        created_at: '',
+      })) as unknown as Ownership[];
+
+      const payouts = calculatePayouts({
+        totalPot: Number(poolRes.data.total_pot),
+        leaderboard,
+        rules,
+        ownerships: ownershipsForCalc,
+        scores,
+        golfers: (golfersRes.data ?? []) as Golfer[],
+      });
+      for (const p of payouts) {
+        golferPayoutMap.set(p.golfer_id, (golferPayoutMap.get(p.golfer_id) ?? 0) + p.payout_amount);
+      }
+    }
+
+    // Build per-user financials rows
+    const financialsMap = new Map<string, FinancialsRow>();
+    for (const row of ownershipRows) {
+      const uid = row.user_id;
+      const displayName = (row.profiles as any)?.display_name ?? 'Unknown';
+      const golferName = (row.golfers as any)?.name ?? 'Unknown';
+      const price = Number(row.purchase_price);
+
+      if (!financialsMap.has(uid)) {
+        financialsMap.set(uid, {
+          user_id: uid,
+          display_name: displayName,
+          golfers: [],
+          totalBuyIn: 0,
+          projectedPayout: hasScores ? 0 : null,
+          netProfit: null,
+        });
+      }
+      const entry = financialsMap.get(uid)!;
+      entry.golfers.push({ name: golferName, price });
+      entry.totalBuyIn += price;
+      if (hasScores && entry.projectedPayout !== null) {
+        entry.projectedPayout += golferPayoutMap.get(row.golfer_id) ?? 0;
+      }
+    }
+
+    const financialsRows: FinancialsRow[] = Array.from(financialsMap.values()).map((row) => {
+      row.golfers.sort((a, b) => b.price - a.price);
+      if (hasScores && row.projectedPayout !== null) {
+        row.netProfit = Math.round(row.projectedPayout) - row.totalBuyIn;
+      }
+      return row;
+    });
+
+    financialsRows.sort((a, b) => {
+      if (a.netProfit !== null && b.netProfit !== null) return b.netProfit - a.netProfit;
+      return b.totalBuyIn - a.totalBuyIn;
+    });
+    setFinancials(financialsRows);
 
     setLoading(false);
   }
@@ -883,6 +971,117 @@ export default function AdminPage({ params }: { params: { id: string } }) {
           </table>
         </div>
       )}
+
+      {/* ── Pool Financials ─────────────────────────────────────────────────── */}
+      {financials.length > 0 && (() => {
+        const totalBuyIn = financials.reduce((s, r) => s + r.totalBuyIn, 0);
+        const totalGolfersSold = financials.reduce((s, r) => s + r.golfers.length, 0);
+        const totalProjected = financials.every((r) => r.projectedPayout !== null)
+          ? financials.reduce((s, r) => s + Math.round(r.projectedPayout!), 0)
+          : null;
+        const hasScores = financials.some((r) => r.projectedPayout !== null);
+        const golfersRemaining = golfers.length - totalGolfersSold;
+
+        return (
+          <div className="card p-0 overflow-hidden">
+            <div className="px-4 py-3 border-b border-masters-cream-dark">
+              <h3 className="font-display text-lg text-masters-green">Pool Financials</h3>
+            </div>
+
+            {/* Metric cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-masters-cream-dark">
+              {[
+                { label: 'Total Pot', value: `$${totalBuyIn.toLocaleString()}` },
+                { label: 'Players', value: `${financials.length}` },
+                { label: 'Golfers Sold', value: `${totalGolfersSold}` },
+                { label: 'Golfers Remaining', value: `${golfersRemaining >= 0 ? golfersRemaining : 0}` },
+              ].map(({ label, value }) => (
+                <div key={label} className="bg-white px-4 py-3 text-center">
+                  <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-1">{label}</p>
+                  <p className="font-display text-xl font-semibold text-masters-green">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Collapsible table */}
+            <div className="px-4 py-3 border-t border-masters-cream-dark">
+              <button
+                className="w-full flex items-center justify-between text-left mb-3"
+                onClick={() => setFinancialsOpen((v) => !v)}
+              >
+                <span className="text-sm font-semibold text-masters-green">Participant Breakdown</span>
+                <span className="text-gray-400 text-xs">{financialsOpen ? '▲' : '▼'}</span>
+              </button>
+
+              {financialsOpen && (
+                <div className="overflow-x-auto -mx-4 px-4">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-masters-green/10 text-left text-xs uppercase tracking-wide text-gray-500">
+                        <th className="px-3 py-2 font-medium">User</th>
+                        <th className="px-3 py-2 font-medium">Golfers Owned</th>
+                        <th className="px-3 py-2 font-medium text-right">Total Buy-In</th>
+                        {hasScores && <th className="px-3 py-2 font-medium text-right">Proj. Payout</th>}
+                        {hasScores && <th className="px-3 py-2 font-medium text-right">Net Profit</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {financials.map((row) => (
+                        <tr key={row.user_id} className="border-t border-masters-cream-dark hover:bg-gray-50">
+                          <td className="px-3 py-2 font-medium whitespace-nowrap">{row.display_name}</td>
+                          <td className="px-3 py-2 text-gray-500 text-xs max-w-xs">
+                            {row.golfers.map((g) => `${g.name} ($${g.price})`).join(', ')}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-semibold text-masters-green whitespace-nowrap">
+                            ${row.totalBuyIn.toLocaleString()}
+                          </td>
+                          {hasScores && (
+                            <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+                              {row.projectedPayout !== null
+                                ? <span className="text-masters-green">${Math.round(row.projectedPayout).toLocaleString()}</span>
+                                : <span className="text-gray-300">—</span>}
+                            </td>
+                          )}
+                          {hasScores && (
+                            <td className="px-3 py-2 text-right font-mono font-semibold whitespace-nowrap">
+                              {row.netProfit !== null ? (
+                                <span className={row.netProfit >= 0 ? 'text-green-600' : 'text-red-500'}>
+                                  {row.netProfit >= 0 ? '+' : ''}${row.netProfit.toLocaleString()}
+                                </span>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+
+                      {/* Totals row */}
+                      <tr className="border-t-2 border-masters-green/20 bg-masters-green/5 font-bold text-sm">
+                        <td className="px-3 py-2 text-masters-green">Totals</td>
+                        <td className="px-3 py-2 text-gray-600 font-normal text-xs">
+                          {totalGolfersSold} golfer{totalGolfersSold !== 1 ? 's' : ''}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-masters-green">
+                          ${totalBuyIn.toLocaleString()}
+                        </td>
+                        {hasScores && (
+                          <td className="px-3 py-2 text-right font-mono text-masters-green">
+                            {totalProjected !== null ? `$${totalProjected.toLocaleString()}` : '—'}
+                          </td>
+                        )}
+                        {hasScores && (
+                          <td className="px-3 py-2 text-right font-mono text-gray-500">$0</td>
+                        )}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Current field */}
       <div className="card overflow-x-auto p-0">
