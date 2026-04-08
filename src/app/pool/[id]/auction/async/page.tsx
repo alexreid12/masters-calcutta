@@ -41,6 +41,9 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
   const [watchlistOpen, setWatchlistOpen] = useState(true);
 
+  // My Bids Summary panel
+  const [myBidsSummaryOpen, setMyBidsSummaryOpen] = useState(true);
+
   // Cart / batch bidding
   const [cart, setCart] = useState<Set<string>>(new Set());
   const [cartAmount, setCartAmount] = useState('');
@@ -223,6 +226,12 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
 
   // ── Derived values ───────────────────────────────────────────────────────────
 
+  const myHighBids = golfers
+    .filter((g) => g.highBidderId === user?.id)
+    .sort((a, b) => (b.highBid ?? 0) - (a.highBid ?? 0));
+  const myHighBidCount = myHighBids.length;
+  const myTotalCommitted = myHighBids.reduce((sum, g) => sum + (g.highBid ?? 0), 0);
+
   const watchlistGolfers = golfers.filter((g) => watchlist.has(g.id));
   const cartGolfers = golfers.filter((g) => cart.has(g.id));
   const cartMaxMinBid = cartGolfers.length > 0
@@ -261,15 +270,67 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
         )}
       </div>
 
-      {/* Running pot */}
-      <div className="flex items-center gap-4 bg-masters-green/5 border border-masters-green/20 rounded-xl px-4 py-3 mb-4">
-        <div>
-          <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold">Current Pot</p>
-          <p className="font-display text-2xl font-semibold text-masters-green">${pot.toLocaleString()}</p>
+      {/* ── My Bids Summary ───────────────────────────────────────────────── */}
+      <div className="card mb-4 border border-masters-green/20">
+        {/* Metric row */}
+        <div className="grid grid-cols-3 gap-3 mb-3">
+          <div className="text-center">
+            <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-1">My Bids</p>
+            <p className="font-display text-2xl font-semibold text-masters-green">{myHighBidCount}</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-1">Total Committed</p>
+            <p className="font-display text-2xl font-semibold text-masters-green">${myTotalCommitted.toLocaleString()}</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-1">Pool Pot</p>
+            <p className="font-display text-2xl font-semibold text-masters-gold">${pot.toLocaleString()}</p>
+          </div>
         </div>
-        <p className="text-xs text-gray-400 leading-snug max-w-xs">
-          Sum of all current high bids. Updates live as bids come in.
-        </p>
+
+        {/* Collapsible high-bids table */}
+        <div className="border-t border-gray-100 pt-3">
+          <button
+            className="w-full flex items-center justify-between text-left mb-2"
+            onClick={() => setMyBidsSummaryOpen((v) => !v)}
+          >
+            <span className="text-sm font-semibold text-masters-green">My Current High Bids</span>
+            <span className="text-gray-400 text-xs">{myBidsSummaryOpen ? '▲' : '▼'}</span>
+          </button>
+
+          {myBidsSummaryOpen && (
+            myHighBids.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-3">You don&apos;t hold any high bids yet</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-400 text-xs uppercase tracking-wide">
+                    <th className="text-left pb-1 font-medium">Golfer</th>
+                    <th className="text-right pb-1 font-medium">My Bid</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {myHighBids.map((g) => (
+                    <tr key={g.id} className="border-t border-gray-50">
+                      <td className="py-1.5 font-medium">
+                        {g.name}<AmateurBadge isAmateur={g.is_amateur} />
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-masters-green">
+                        ${g.highBid!.toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-gray-200">
+                    <td className="pt-2 font-bold text-masters-green">Total</td>
+                    <td className="pt-2 text-right font-mono font-bold text-masters-green">
+                      ${myTotalCommitted.toLocaleString()}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            )
+          )}
+        </div>
       </div>
 
       <p className="text-sm text-gray-500 mb-4">
