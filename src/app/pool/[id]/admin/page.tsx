@@ -78,6 +78,13 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   const [refreshLoading, setRefreshLoading] = useState(false);
   const [refreshResult, setRefreshResult] = useState<{ text: string; ok: boolean } | null>(null);
 
+  // Auction deadlines
+  const [asyncBidStart, setAsyncBidStart] = useState('');
+  const [asyncBidDeadline, setAsyncBidDeadline] = useState('');
+  const [liveAuctionStart, setLiveAuctionStart] = useState('');
+  const [savingDeadlines, setSavingDeadlines] = useState(false);
+  const [deadlinesMessage, setDeadlinesMessage] = useState<{ text: string; ok: boolean } | null>(null);
+
   // Status advance
   const [statusLoading, setStatusLoading] = useState(false);
 
@@ -130,6 +137,9 @@ export default function AdminPage({ params }: { params: { id: string } }) {
       setPool(poolRes.data);
       setIsPrivateDraft(poolRes.data.is_private ?? false);
       setPasswordDraft(poolRes.data.join_password ?? '');
+      setAsyncBidStart(toDatetimeLocal(poolRes.data.async_bid_start));
+      setAsyncBidDeadline(toDatetimeLocal(poolRes.data.async_bid_deadline));
+      setLiveAuctionStart(toDatetimeLocal(poolRes.data.live_auction_start));
       if (user && poolRes.data.commissioner_id === user.id) {
         setAuthorized(true);
       }
@@ -463,6 +473,34 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     setRemovingMember(null);
   }
 
+  function toDatetimeLocal(utcString: string | null): string {
+    if (!utcString) return '';
+    const d = new Date(utcString);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  async function saveDeadlines() {
+    setSavingDeadlines(true);
+    setDeadlinesMessage(null);
+    const { error } = await supabase
+      .from('pools')
+      .update({
+        async_bid_start: asyncBidStart ? new Date(asyncBidStart).toISOString() : null,
+        async_bid_deadline: asyncBidDeadline ? new Date(asyncBidDeadline).toISOString() : null,
+        live_auction_start: liveAuctionStart ? new Date(liveAuctionStart).toISOString() : null,
+      })
+      .eq('id', params.id);
+    if (error) {
+      setDeadlinesMessage({ text: error.message, ok: false });
+    } else {
+      setDeadlinesMessage({ text: 'Deadlines saved.', ok: true });
+      await load();
+    }
+    setSavingDeadlines(false);
+    setTimeout(() => setDeadlinesMessage(null), 3000);
+  }
+
   async function advanceStatus() {
     if (!pool) return;
     const next = STATUS_TRANSITIONS[pool.status];
@@ -534,6 +572,62 @@ export default function AdminPage({ params }: { params: { id: string } }) {
             )}
           </div>
         )}
+      </div>
+
+      {/* Auction Deadlines */}
+      <div className="card">
+        <h3 className="font-display text-lg text-masters-green mb-3">Auction Deadlines</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Async Bidding Opens
+            </label>
+            <input
+              type="datetime-local"
+              value={asyncBidStart}
+              onChange={(e) => setAsyncBidStart(e.target.value)}
+              className="input text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Async Bidding Closes
+            </label>
+            <input
+              type="datetime-local"
+              value={asyncBidDeadline}
+              onChange={(e) => setAsyncBidDeadline(e.target.value)}
+              className="input text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Live Auction Starts
+            </label>
+            <input
+              type="datetime-local"
+              value={liveAuctionStart}
+              onChange={(e) => setLiveAuctionStart(e.target.value)}
+              className="input text-sm"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-3 mt-4">
+          <button
+            onClick={saveDeadlines}
+            disabled={savingDeadlines}
+            className="btn-primary flex items-center gap-2 text-sm"
+          >
+            {savingDeadlines && <Spinner className="text-white w-3.5 h-3.5" />}
+            Save Deadlines
+          </button>
+          {deadlinesMessage && (
+            <p className={`text-xs font-medium ${deadlinesMessage.ok ? 'text-masters-green' : 'text-red-500'}`}>
+              {deadlinesMessage.text}
+            </p>
+          )}
+        </div>
+        <p className="text-xs text-gray-400 mt-2">Times are in your local timezone.</p>
       </div>
 
       {/* Pot Breakdown */}
