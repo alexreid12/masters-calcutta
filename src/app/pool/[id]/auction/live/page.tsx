@@ -346,7 +346,14 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
       {/* ── Center: Active Auction ────────────────────────────────────────── */}
       <div className="lg:order-2 order-2 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-2xl text-masters-green">Live Auction</h2>
+          <div>
+            <h2 className="font-display text-2xl text-masters-green">Live Auction</h2>
+            {state.item && (
+              <p className="text-sm font-semibold text-masters-gold mt-0.5">
+                On the block: {state.item.golfer?.name}
+              </p>
+            )}
+          </div>
           {pool && (
             <div className="text-right">
               <p className="text-xs text-gray-400 uppercase tracking-wide">Current Pot</p>
