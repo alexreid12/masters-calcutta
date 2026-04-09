@@ -62,32 +62,36 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
     if (!user_id) {
       // Remove ownership
-      await serviceClient
+      const { error } = await serviceClient
         .from('ownership')
         .delete()
         .eq('pool_id', params.id)
         .eq('golfer_id', golfer_id);
+      if (error) return NextResponse.json({ error: `Delete failed for golfer ${golfer_id}: ${error.message}` }, { status: 500 });
     } else {
-      const { data: existing } = await serviceClient
+      const { data: existing, error: selectError } = await serviceClient
         .from('ownership')
         .select('id')
         .eq('pool_id', params.id)
         .eq('golfer_id', golfer_id)
         .maybeSingle();
+      if (selectError) return NextResponse.json({ error: `Lookup failed for golfer ${golfer_id}: ${selectError.message}` }, { status: 500 });
 
       if (existing) {
-        await serviceClient
+        const { error } = await serviceClient
           .from('ownership')
           .update({ user_id, purchase_price: purchase_price ?? 0 })
           .eq('id', existing.id);
+        if (error) return NextResponse.json({ error: `Update failed for golfer ${golfer_id}: ${error.message}` }, { status: 500 });
       } else {
-        await serviceClient.from('ownership').insert({
+        const { error } = await serviceClient.from('ownership').insert({
           pool_id: params.id,
           golfer_id,
           user_id,
           purchase_price: purchase_price ?? 0,
           acquired_via: 'manual',
         });
+        if (error) return NextResponse.json({ error: `Insert failed for golfer ${golfer_id}: ${error.message}` }, { status: 500 });
       }
     }
     updatedCount++;

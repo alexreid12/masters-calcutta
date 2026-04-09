@@ -47,6 +47,7 @@ export default function LeaderboardPage({ params }: { params: { id: string } }) 
     const scoreChannel = supabase
       .channel(`leaderboard:${params.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scores', filter: `pool_id=eq.${params.id}` }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ownership', filter: `pool_id=eq.${params.id}` }, () => loadData())
       .subscribe();
 
     const msgChannel = supabase
