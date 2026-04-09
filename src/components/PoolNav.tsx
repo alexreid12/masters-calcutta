@@ -31,6 +31,11 @@ function getTabs(poolId: string): Tab[] {
       statuses: ['async_bidding','live_auction'],
     },
     {
+      label: 'Async Results',
+      href: `/pool/${poolId}/auction/results`,
+      statuses: ['live_auction','locked','tournament_active','completed'],
+    },
+    {
       label: 'Live Auction',
       href: `/pool/${poolId}/auction/live`,
       statuses: ['live_auction','locked','tournament_active','completed'],
