@@ -273,7 +273,7 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
       {/* ── My Bids Summary ───────────────────────────────────────────────── */}
       <div className="card mb-4 border border-masters-green/20">
         {/* Metric row */}
-        <div className="grid grid-cols-3 gap-3 mb-3">
+        <div className="grid grid-cols-3 gap-3">
           <div className="text-center">
             <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-1">My Bids</p>
             <p className="font-display text-2xl font-semibold text-masters-green">{myHighBidCount}</p>
@@ -288,18 +288,24 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
           </div>
         </div>
 
-        {/* Collapsible high-bids table */}
-        <div className="border-t border-gray-100 pt-3">
-          <button
-            className="w-full flex items-center justify-between text-left mb-2"
-            onClick={() => setMyBidsSummaryOpen((v) => !v)}
-          >
-            <span className="text-sm font-semibold text-masters-green">My Current High Bids</span>
-            <span className="text-gray-400 text-xs">{myBidsSummaryOpen ? '▲' : '▼'}</span>
-          </button>
+      </div>
 
-          {myBidsSummaryOpen && (
-            myHighBids.length === 0 ? (
+      {/* ── My Winning Bids ───────────────────────────────────────────────── */}
+      <div className="card mb-4 border border-masters-green/20">
+        <button
+          className="w-full flex items-center justify-between text-left"
+          onClick={() => setMyBidsSummaryOpen((v) => !v)}
+        >
+          <div>
+            <span className="font-display text-base text-masters-green font-semibold">My Winning Bids</span>
+            <p className="text-xs text-gray-400 mt-0.5">Golfers you&apos;d own if bidding closed right now</p>
+          </div>
+          <span className="text-gray-400 text-xs flex-shrink-0 ml-3">{myBidsSummaryOpen ? '▲' : '▼'}</span>
+        </button>
+
+        {myBidsSummaryOpen && (
+          <div className="mt-3">
+            {myHighBids.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-3">You don&apos;t hold any high bids yet</p>
             ) : (
               <table className="w-full text-sm">
@@ -328,9 +334,9 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
                   </tr>
                 </tbody>
               </table>
-            )
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
 
       <p className="text-sm text-gray-500 mb-4">

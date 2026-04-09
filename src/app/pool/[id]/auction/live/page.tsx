@@ -1,10 +1,17 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/components/AuthProvider';
 import { Spinner, Money, AmateurBadge } from '@/components/ui';
 import type { LiveAuctionItem, Golfer, Profile, Pool } from '@/types/database';
+
+interface OwnedGolfer {
+  golfer_id: string;
+  name: string;
+  is_amateur: boolean;
+  price: number;
+}
 
 interface AuctionState {
   item: (LiveAuctionItem & { golfer: Golfer; current_bidder: Profile | null }) | null;
@@ -36,8 +43,11 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
   const [flashKey, setFlashKey] = useState(0);
   const [winFlash, setWinFlash] = useState(false);
   const [myTeamOpen, setMyTeamOpen] = useState(false);
+  const [myAsync, setMyAsync] = useState<OwnedGolfer[]>([]);
+  const [myLive, setMyLive] = useState<OwnedGolfer[]>([]);
+  const [newLiveWinId, setNewLiveWinId] = useState<string | null>(null);
   const prevBidRef = useRef<number>(0);
-  const prevWinCountRef = useRef<number>(0);
+  const prevLiveIdsRef = useRef<Set<string> | null>(null);
 
   const isCommissioner = pool?.commissioner_id === user?.id;
 
@@ -65,7 +75,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
         .order('world_ranking', { nullsFirst: false }),
       supabase
         .from('ownership')
-        .select('golfer_id, user_id, profiles!user_id(display_name)')
+        .select('golfer_id, user_id, purchase_price, acquired_via, profiles!user_id(display_name), golfers(name, is_amateur)')
         .eq('pool_id', params.id),
     ]);
 
@@ -88,6 +98,19 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
       sold: soldWithOwners,
       pending,
     });
+
+    // Build user's ownership split by acquisition phase
+    const ownershipRows = ownershipsRes.data ?? [];
+    const byPrice = (a: OwnedGolfer, b: OwnedGolfer) => b.price - a.price;
+    const toOwned = (o: any): OwnedGolfer => ({
+      golfer_id: o.golfer_id,
+      name: (o.golfers as any)?.name ?? 'Unknown',
+      is_amateur: (o.golfers as any)?.is_amateur ?? false,
+      price: Number(o.purchase_price),
+    });
+    setMyAsync(ownershipRows.filter((o: any) => o.user_id === user?.id && o.acquired_via === 'async_auction').map(toOwned).sort(byPrice));
+    setMyLive(ownershipRows.filter((o: any) => o.user_id === user?.id && o.acquired_via === 'live_auction').map(toOwned).sort(byPrice));
+
     setLoading(false);
   }
 
@@ -121,15 +144,19 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     prevBidRef.current = currentBid;
   }, [state.item?.current_bid]);
 
-  // Win celebration when user's golfer count increases
+  // Flash when user wins a new live auction golfer
   useEffect(() => {
-    const myWinCount = state.sold.filter((s) => s.current_bidder_id === user?.id).length;
-    if (myWinCount > prevWinCountRef.current && prevWinCountRef.current >= 0 && !loading) {
-      setWinFlash(true);
-      setTimeout(() => setWinFlash(false), 1500);
+    const currentIds = new Set(myLive.map((g) => g.golfer_id));
+    if (prevLiveIdsRef.current !== null) {
+      const added = myLive.find((g) => !prevLiveIdsRef.current!.has(g.golfer_id));
+      if (added) {
+        setNewLiveWinId(added.golfer_id);
+        setWinFlash(true);
+        setTimeout(() => { setNewLiveWinId(null); setWinFlash(false); }, 2000);
+      }
     }
-    prevWinCountRef.current = myWinCount;
-  }, [state.sold, user?.id, loading]);
+    prevLiveIdsRef.current = currentIds;
+  }, [myLive]);
 
   const minBid = state.item
     ? Math.max(state.item.floor_price, state.item.current_bid + 1)
@@ -217,11 +244,9 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     (v, i, arr) => arr.indexOf(v) === i
   );
 
-  // Derived: current user's won golfers
-  const myGolfers = state.sold
-    .filter((s) => s.current_bidder_id === user?.id)
-    .sort((a, b) => b.current_bid - a.current_bid);
-  const myTotalSpent = myGolfers.reduce((sum, s) => sum + s.current_bid, 0);
+  const myTotalGolfers = myAsync.length + myLive.length;
+  const myAsyncTotal = myAsync.reduce((s, g) => s + g.price, 0);
+  const myLiveTotal = myLive.reduce((s, g) => s + g.price, 0);
 
   if (loading) return <div className="flex justify-center py-20"><Spinner className="text-masters-green w-8 h-8" /></div>;
   if (!pool) return null;
@@ -239,7 +264,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
           onClick={() => setMyTeamOpen((v) => !v)}
         >
           <span className="font-display text-lg text-masters-green">
-            My Team {myGolfers.length > 0 && <span className="text-sm font-mono text-gray-400">({myGolfers.length})</span>}
+            My Team {myTotalGolfers > 0 && <span className="text-sm font-mono text-gray-400">({myTotalGolfers})</span>}
           </span>
           <span className="text-gray-400 text-sm">{myTeamOpen ? '▲' : '▼'}</span>
         </button>
@@ -248,28 +273,72 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
         <div className={`card ${myTeamOpen ? '' : 'hidden lg:block'} transition-all ${winFlash ? 'ring-2 ring-masters-green bg-masters-green/5' : ''}`}>
           <h3 className="font-display text-lg text-masters-green mb-3 hidden lg:block">My Team</h3>
 
-          {myGolfers.length === 0 ? (
+          {myTotalGolfers === 0 ? (
             <p className="text-sm text-gray-400 py-4 text-center">No golfers yet — start bidding!</p>
           ) : (
-            <>
-              <div className="flex items-center justify-between mb-3 pb-2 border-b border-masters-cream-dark">
-                <span className="text-xs text-gray-500">Total Spent</span>
-                <span className="font-mono font-semibold text-masters-green text-sm">${myTotalSpent}</span>
+            <div className="space-y-3 max-h-[32rem] overflow-y-auto">
+
+              {/* Async section */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1.5">Async</p>
+                {myAsync.length === 0 ? (
+                  <p className="text-xs text-gray-300 italic">None yet</p>
+                ) : (
+                  <>
+                    <div className="space-y-1">
+                      {myAsync.map((g) => (
+                        <div key={g.golfer_id} className="flex items-center justify-between py-1 border-b border-masters-cream-dark last:border-0">
+                          <span className="text-sm font-medium truncate mr-2">{g.name}<AmateurBadge isAmateur={g.is_amateur} /></span>
+                          <Money amount={g.price} className="text-masters-green text-sm font-mono shrink-0" />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between pt-1.5">
+                      <span className="text-xs text-gray-400">Subtotal</span>
+                      <span className="text-xs font-mono text-gray-500">${myAsyncTotal.toLocaleString()}</span>
+                    </div>
+                  </>
+                )}
               </div>
-              <div className="space-y-1.5 max-h-80 overflow-y-auto">
-                {myGolfers.map((s: any) => (
-                  <div
-                    key={s.id}
-                    className={`flex items-center justify-between py-1.5 border-b border-masters-cream-dark last:border-0 ${winFlash && s === myGolfers[0] ? 'text-masters-green font-semibold' : ''}`}
-                  >
-                    <span className="text-sm font-medium">
-                      {s.golfer?.name}<AmateurBadge isAmateur={s.golfer?.is_amateur ?? false} />
-                    </span>
-                    <Money amount={s.current_bid} className="text-masters-green text-sm font-mono" />
-                  </div>
-                ))}
+
+              <div className="border-t border-masters-cream-dark" />
+
+              {/* Live section */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1.5">Live</p>
+                {myLive.length === 0 ? (
+                  <p className="text-xs text-gray-300 italic">None yet</p>
+                ) : (
+                  <>
+                    <div className="space-y-1">
+                      {myLive.map((g) => (
+                        <div
+                          key={g.golfer_id}
+                          className={`flex items-center justify-between py-1 border-b border-masters-cream-dark last:border-0 rounded transition-colors ${newLiveWinId === g.golfer_id ? 'bg-masters-green/10 px-1' : ''}`}
+                        >
+                          <span className="text-sm font-medium truncate mr-2">{g.name}<AmateurBadge isAmateur={g.is_amateur} /></span>
+                          <Money amount={g.price} className="text-masters-green text-sm font-mono shrink-0" />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between pt-1.5">
+                      <span className="text-xs text-gray-400">Subtotal</span>
+                      <span className="text-xs font-mono text-gray-500">${myLiveTotal.toLocaleString()}</span>
+                    </div>
+                  </>
+                )}
               </div>
-            </>
+
+              {/* Combined total */}
+              <div className="border-t-2 border-masters-green/20 pt-2 flex items-center justify-between">
+                <span className="text-xs text-gray-500">
+                  Total Golfers: <span className="font-semibold text-masters-green">{myTotalGolfers}</span>
+                </span>
+                <span className="font-mono font-semibold text-masters-green text-sm">
+                  ${(myAsyncTotal + myLiveTotal).toLocaleString()}
+                </span>
+              </div>
+            </div>
           )}
         </div>
       </div>
