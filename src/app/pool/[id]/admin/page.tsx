@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/components/AuthProvider';
 import { useRouter } from 'next/navigation';
-import { Spinner } from '@/components/ui';
+import { Spinner, AmateurBadge } from '@/components/ui';
 import { calculatePayouts } from '@/lib/payout-engine';
 import type { Pool, Golfer, PoolStatus, PoolMember, Profile, LeaderboardEntry, PayoutRule, Score, Ownership } from '@/types/database';
 import Papa from 'papaparse';
@@ -110,6 +110,14 @@ export default function AdminPage({ params }: { params: { id: string } }) {
   };
   const [financials, setFinancials] = useState<FinancialsRow[]>([]);
   const [financialsOpen, setFinancialsOpen] = useState(true);
+
+  // Manage Ownership
+  type ProfileOption = { id: string; display_name: string; email: string };
+  type OwnershipEdit = { owner_id: string | null; price: string; dirty: boolean };
+  const [allProfiles, setAllProfiles] = useState<ProfileOption[]>([]);
+  const [ownershipEdits, setOwnershipEdits] = useState<Record<string, OwnershipEdit>>({});
+  const [manageOwnershipSaving, setManageOwnershipSaving] = useState(false);
+  const [manageOwnershipResult, setManageOwnershipResult] = useState<{ text: string; ok: boolean } | null>(null);
 
   // Share & Privacy
   type MemberWithProfile = PoolMember & { profiles: Pick<Profile, 'display_name' | 'email'> | null };
@@ -261,10 +269,37 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     });
     setFinancials(financialsRows);
 
+    // Sync ownership management edits from fresh data, preserving any unsaved dirty rows
+    const ownershipByGolfer = new Map(ownershipRows.map((r: any) => [r.golfer_id, r]));
+    setOwnershipEdits((prev) => {
+      const next: Record<string, OwnershipEdit> = {};
+      for (const g of golfersRes.data ?? []) {
+        const owned = ownershipByGolfer.get(g.id);
+        const existing = prev[g.id];
+        next[g.id] = existing?.dirty
+          ? existing
+          : {
+              owner_id: owned?.user_id ?? null,
+              price: owned ? String(Math.round(Number(owned.purchase_price))) : '',
+              dirty: false,
+            };
+      }
+      return next;
+    });
+
     setLoading(false);
   }
 
   useEffect(() => { if (user) load(); }, [user]);
+
+  // Load all profiles for the ownership management dropdown (commissioner-only via service client)
+  useEffect(() => {
+    if (!authorized) return;
+    fetch(`/api/pools/${params.id}/ownership`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => data && setAllProfiles(data.profiles ?? []));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authorized]);
 
   async function addGolfer(e: React.FormEvent) {
     e.preventDefault();
@@ -543,10 +578,52 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     setStatusLoading(false);
   }
 
+  async function saveOwnershipChanges(golferIds: string[]) {
+    const changes = golferIds
+      .map((gid) => {
+        const edit = ownershipEdits[gid];
+        if (!edit?.dirty) return null;
+        const purchase_price = edit.owner_id ? (parseInt(edit.price, 10) || 0) : null;
+        return { golfer_id: gid, user_id: edit.owner_id, purchase_price };
+      })
+      .filter(Boolean);
+
+    if (changes.length === 0) return;
+    setManageOwnershipSaving(true);
+    setManageOwnershipResult(null);
+
+    const res = await fetch(`/api/pools/${params.id}/ownership`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ changes }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setManageOwnershipResult({ text: data.error ?? 'Save failed', ok: false });
+    } else {
+      setManageOwnershipResult({ text: `Updated ${data.updated} golfer${data.updated !== 1 ? 's' : ''}`, ok: true });
+      await load();
+      setTimeout(() => setManageOwnershipResult(null), 4000);
+    }
+    setManageOwnershipSaving(false);
+  }
+
   if (loading) return <div className="flex justify-center py-20"><Spinner className="text-masters-green w-8 h-8" /></div>;
   if (!authorized) return <div className="card text-center py-12 text-gray-400">Commissioner access required.</div>;
 
   const nextStatus = pool ? STATUS_TRANSITIONS[pool.status] : null;
+
+  // Profile dropdown: disambiguate users with the same display_name
+  const displayNameCounts = new Map<string, number>();
+  for (const p of allProfiles) {
+    displayNameCounts.set(p.display_name, (displayNameCounts.get(p.display_name) ?? 0) + 1);
+  }
+  const profileLabel = (p: { id: string; display_name: string; email: string }) =>
+    (displayNameCounts.get(p.display_name) ?? 0) > 1
+      ? `${p.display_name} (${p.email})`
+      : p.display_name;
+  const hasUnsavedOwnershipChanges = Object.values(ownershipEdits).some((e) => e.dirty);
 
   return (
     <div className="space-y-6">
@@ -1208,6 +1285,122 @@ export default function AdminPage({ params }: { params: { id: string } }) {
           </div>
         );
       })()}
+
+      {/* Manage Ownership */}
+      <div className="card p-0 overflow-hidden">
+        <div className="px-4 py-3 border-b border-masters-cream-dark flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h3 className="font-display text-lg text-masters-green">Manage Ownership</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Manually assign or correct ownership — for offline auctions, corrections, or manual overrides.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {manageOwnershipResult && (
+              <p className={`text-xs font-medium ${manageOwnershipResult.ok ? 'text-masters-green' : 'text-red-500'}`}>
+                {manageOwnershipResult.text}
+              </p>
+            )}
+            <button
+              onClick={() => saveOwnershipChanges(Object.keys(ownershipEdits))}
+              disabled={manageOwnershipSaving || !hasUnsavedOwnershipChanges}
+              className="btn-primary text-sm flex items-center gap-2 disabled:opacity-40"
+            >
+              {manageOwnershipSaving && <Spinner className="text-white w-3.5 h-3.5" />}
+              Save All
+            </button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-masters-green/10 text-left text-xs uppercase tracking-wide text-gray-500">
+                <th className="px-4 py-2 font-medium">Golfer</th>
+                <th className="px-4 py-2 font-medium text-center">Rank</th>
+                <th className="px-4 py-2 font-medium">Owner</th>
+                <th className="px-4 py-2 font-medium">Price</th>
+                <th className="px-4 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {golfers.map((g) => {
+                const edit = ownershipEdits[g.id];
+                if (!edit) return null;
+                return (
+                  <tr
+                    key={g.id}
+                    className={`border-b border-masters-cream-dark last:border-0 transition-colors ${
+                      edit.dirty ? 'bg-yellow-50' : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <td className="px-4 py-2 font-medium whitespace-nowrap">
+                      {g.name}<AmateurBadge isAmateur={g.is_amateur} />
+                    </td>
+                    <td className="px-4 py-2 font-mono text-gray-400 text-xs text-center">
+                      {g.world_ranking ?? '—'}
+                    </td>
+                    <td className="px-4 py-2">
+                      <select
+                        value={edit.owner_id ?? ''}
+                        onChange={(e) =>
+                          setOwnershipEdits((prev) => ({
+                            ...prev,
+                            [g.id]: { ...prev[g.id], owner_id: e.target.value || null, dirty: true },
+                          }))
+                        }
+                        className="input text-sm py-1 min-w-[160px]"
+                      >
+                        <option value="">— Unowned —</option>
+                        {allProfiles.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {profileLabel(p)}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="relative w-28">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={edit.price}
+                          onChange={(e) =>
+                            setOwnershipEdits((prev) => ({
+                              ...prev,
+                              [g.id]: { ...prev[g.id], price: e.target.value, dirty: true },
+                            }))
+                          }
+                          disabled={!edit.owner_id}
+                          className="input text-sm pl-6 w-full disabled:opacity-40"
+                          placeholder="0"
+                        />
+                      </div>
+                    </td>
+                    <td className="px-4 py-2">
+                      <button
+                        onClick={() => saveOwnershipChanges([g.id])}
+                        disabled={!edit.dirty || manageOwnershipSaving}
+                        className="btn-outline text-xs py-1 px-3 disabled:opacity-40"
+                      >
+                        Save
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {golfers.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                    No golfers in this pool yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* Current field */}
       <div className="card overflow-x-auto p-0">

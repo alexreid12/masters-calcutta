@@ -10,7 +10,7 @@ export type PoolStatus =
 
 export type GolferStatus = 'active' | 'withdrawn' | 'missed_cut';
 export type AuctionItemStatus = 'pending' | 'open' | 'going_once' | 'going_twice' | 'sold';
-export type AcquiredVia = 'async_auction' | 'live_auction';
+export type AcquiredVia = 'async_auction' | 'live_auction' | 'manual';
 
 export interface Profile {
   id: string;
