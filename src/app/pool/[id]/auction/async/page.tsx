@@ -298,7 +298,7 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
         >
           <div>
             <span className="font-display text-base text-masters-green font-semibold">My Winning Bids</span>
-            <p className="text-xs text-gray-400 mt-0.5">Golfers you&apos;d own if bidding closed right now</p>
+            <p className="text-xs text-gray-400 mt-0.5">Golfers you&apos;ll own when bidding closes — binding commitments</p>
           </div>
           <span className="text-gray-400 text-xs flex-shrink-0 ml-3">{myBidsSummaryOpen ? '▲' : '▼'}</span>
         </button>
@@ -340,8 +340,7 @@ export default function AsyncBiddingPage({ params }: { params: { id: string } })
       </div>
 
       <p className="text-sm text-gray-500 mb-4">
-        Place your max bids below. High bids become floor prices in the live auction.
-        Bids are permanent — raise your bid if you get outbid.
+        Place your max bids below. Your high bid is a <strong className="text-gray-700">binding commitment</strong> — if you hold the high bid when async bidding closes, you own that golfer. In the live auction, others can bid higher to take a golfer away from you, but you are guaranteed ownership unless outbid. Bids are permanent — raise your bid if you get outbid.
       </p>
 
       {/* ── Watchlist panel ───────────────────────────────────────────────── */}

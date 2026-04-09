@@ -505,8 +505,40 @@ export default function AdminPage({ params }: { params: { id: string } }) {
     if (!pool) return;
     const next = STATUS_TRANSITIONS[pool.status];
     if (!next) return;
+
+    // Confirm before finalizing async bids
+    if (pool.status === 'async_bidding') {
+      const { data: highBids } = await supabase
+        .from('async_high_bids')
+        .select('golfer_id')
+        .eq('pool_id', params.id);
+      const assignedCount = highBids?.length ?? 0;
+      const unownedCount = golfers.length - assignedCount;
+      const confirmed = window.confirm(
+        `This will finalize all async bids. ${assignedCount} golfer${assignedCount !== 1 ? 's' : ''} will be assigned to their high bidders. ${unownedCount} golfer${unownedCount !== 1 ? 's' : ''} received no bids and will be available in the live auction.\n\nContinue?`
+      );
+      if (!confirmed) return;
+    }
+
     setStatusLoading(true);
-    await supabase.from('pools').update({ status: next }).eq('id', pool.id);
+
+    const res = await fetch(`/api/pools/${params.id}/status`, { method: 'PATCH' });
+    const data = await res.json();
+
+    if (!res.ok) {
+      alert(`Status change failed: ${data.error ?? 'Unknown error'}`);
+      setStatusLoading(false);
+      return;
+    }
+
+    // Show summary when locking the auction
+    if (pool.status === 'live_auction' && data._summary) {
+      const { sold, unsold } = data._summary;
+      alert(
+        `Auction complete. ${sold} golfer${sold !== 1 ? 's' : ''} sold. ${unsold} golfer${unsold !== 1 ? 's' : ''} unsold (no bids received).`
+      );
+    }
+
     await load();
     setStatusLoading(false);
   }

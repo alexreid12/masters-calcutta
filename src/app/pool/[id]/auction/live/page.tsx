@@ -13,10 +13,21 @@ interface OwnedGolfer {
   price: number;
 }
 
+interface OwnerInfo {
+  display_name: string;
+  purchase_price: number;
+  user_id: string;
+  acquired_via: string;
+}
+
+interface PendingGolfer extends Golfer {
+  asyncOwner: OwnerInfo | null;
+}
+
 interface AuctionState {
   item: (LiveAuctionItem & { golfer: Golfer; current_bidder: Profile | null }) | null;
   sold: (LiveAuctionItem & { golfer: Golfer; owner: Profile | null })[];
-  pending: Golfer[];
+  pending: PendingGolfer[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -46,6 +57,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
   const [myAsync, setMyAsync] = useState<OwnedGolfer[]>([]);
   const [myLive, setMyLive] = useState<OwnedGolfer[]>([]);
   const [newLiveWinId, setNewLiveWinId] = useState<string | null>(null);
+  const [golferOwners, setGolferOwners] = useState<Map<string, OwnerInfo>>(new Map());
   const prevBidRef = useRef<number>(0);
   const prevLiveIdsRef = useRef<Set<string> | null>(null);
 
@@ -82,7 +94,16 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     if (poolRes.data) setPool(poolRes.data);
 
     const soldGolferIds = new Set((soldRes.data ?? []).map((s: any) => s.golfer_id));
-    const ownerMap = new Map((ownershipsRes.data ?? []).map((o: any) => [o.golfer_id, { display_name: o.profiles?.display_name, user_id: o.user_id }]));
+    const ownerMap = new Map<string, OwnerInfo>((ownershipsRes.data ?? []).map((o: any) => [
+      o.golfer_id,
+      {
+        display_name: o.profiles?.display_name ?? 'Unknown',
+        user_id: o.user_id,
+        purchase_price: Number(o.purchase_price),
+        acquired_via: o.acquired_via,
+      },
+    ]));
+    setGolferOwners(ownerMap);
 
     // Supabase returns joined tables under their table name (e.g. "golfers", "profiles"),
     // but our TypeScript interface uses singular names ("golfer", "current_bidder").
@@ -99,9 +120,12 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
       owner: ownerMap.has(s.golfer_id) ? { display_name: ownerMap.get(s.golfer_id)?.display_name } : null,
     }));
 
-    const pending = (pendingGolfersRes.data ?? []).filter(
+    const pending: PendingGolfer[] = (pendingGolfersRes.data ?? []).filter(
       (g) => !soldGolferIds.has(g.id) && currentRes.data?.golfer_id !== g.id
-    );
+    ).map((g) => ({
+      ...g,
+      asyncOwner: ownerMap.get(g.id) ?? null,
+    }));
 
     setState({
       item: normalizeItem(currentRes.data),
@@ -136,7 +160,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
       )
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'ownership', filter: `pool_id=eq.${params.id}` },
+        { event: '*', schema: 'public', table: 'ownership', filter: `pool_id=eq.${params.id}` },
         () => loadState()
       )
       .subscribe();
@@ -202,13 +226,10 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
   }
 
   async function nominateGolfer(golferId: string) {
-    const { data: highBid } = await supabase
-      .from('async_high_bids')
-      .select('high_bid')
-      .eq('golfer_id', golferId)
-      .maybeSingle();
-
-    const floor = Math.max(1, Number(highBid?.high_bid ?? 1));
+    // Use already-loaded ownership data for floor price — async owners set the floor,
+    // unowned golfers start at $1.
+    const asyncOwner = golferOwners.get(golferId);
+    const floor = asyncOwner ? asyncOwner.purchase_price : 1;
     await supabase.from('live_auction').insert({
       pool_id: params.id,
       golfer_id: golferId,
@@ -223,31 +244,24 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     if (!state.item) return;
 
     if (!state.item.current_bidder_id) {
-      if (!confirm('No bids on this golfer. Skip and move to next?')) return;
+      const asyncOwner = golferOwners.get(state.item.golfer_id);
+      const msg = asyncOwner?.acquired_via === 'async_auction'
+        ? `No new bids. ${asyncOwner.display_name} keeps this golfer at $${asyncOwner.purchase_price.toLocaleString()} (their async bid). Click OK to confirm.`
+        : 'No bids on this golfer. Skip and move to next?';
+      if (!confirm(msg)) return;
     }
 
-    const { error: updateError } = await supabase
-      .from('live_auction')
-      .update({ status: 'sold', sold_at: new Date().toISOString() })
-      .eq('id', state.item.id);
-
-    if (updateError) {
-      setError('Failed to sell golfer — try again.');
-      return;
+    setSubmitting(true);
+    const res = await fetch(`/api/pools/${params.id}/auction/sell`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: state.item.id }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      setError(json.error ?? 'Failed to sell golfer — try again.');
     }
-
-    if (state.item.current_bidder_id) {
-      const { error: insertError } = await supabase.from('ownership').insert({
-        pool_id: params.id,
-        golfer_id: state.item.golfer_id,
-        user_id: state.item.current_bidder_id,
-        purchase_price: state.item.current_bid,
-        acquired_via: 'live_auction',
-      });
-      if (insertError) {
-        setError(`Golfer marked sold but ownership record failed — notify commissioner. (${insertError.message})`);
-      }
-    }
+    setSubmitting(false);
   }
 
   const quickBidAmounts = [minBid, minBid + 5, minBid + 10, minBid + 25, minBid + 50].filter(
@@ -404,7 +418,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
             </div>
 
             {/* Bid info */}
-            <div className="flex flex-wrap gap-6 mb-6">
+            <div className="flex flex-wrap gap-6 mb-4">
               <div>
                 <p className="text-xs text-gray-400 uppercase tracking-wide">Current Bid</p>
                 <Money
@@ -430,6 +444,22 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
                 </p>
               </div>
             </div>
+
+            {/* Async owner context — shown whenever this golfer has an async owner */}
+            {(() => {
+              const owner = golferOwners.get(state.item!.golfer_id);
+              if (!owner || owner.acquired_via !== 'async_auction') return null;
+              return (
+                <div className="mb-4 px-3 py-2 rounded bg-masters-green/5 border border-masters-green/20 text-xs text-masters-green">
+                  <span className="font-semibold">Async owner:</span>{' '}
+                  {owner.display_name} holds this golfer at{' '}
+                  <span className="font-mono font-semibold">${owner.purchase_price.toLocaleString()}</span>.{' '}
+                  {!state.item!.current_bidder_id
+                    ? 'Bid to take this golfer away — or commissioner clicks SOLD to keep the async result.'
+                    : 'Someone has outbid the async owner.'}
+                </div>
+              );
+            })()}
 
             {/* Bidding controls */}
             {state.item.status !== 'sold' && (
@@ -499,18 +529,31 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
               <h3 className="font-semibold text-gray-700 text-sm">
                 Remaining <span className="badge-gray ml-1">{state.pending.length}</span>
               </h3>
+              {state.pending.some((g) => g.asyncOwner) && (
+                <p className="text-xs text-masters-green mt-0.5">
+                  Green = async-owned · floor = async price
+                </p>
+              )}
             </div>
             <div className="max-h-72 overflow-y-auto">
               {state.pending.map((g) => (
                 <div
                   key={g.id}
-                  className="flex items-center justify-between px-4 py-2 border-b border-masters-cream-dark last:border-0 hover:bg-gray-50"
+                  className={`flex items-center justify-between px-4 py-2 border-b border-masters-cream-dark last:border-0 ${
+                    g.asyncOwner ? 'bg-masters-green/5' : 'hover:bg-gray-50'
+                  }`}
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium truncate">
                       {g.name}<AmateurBadge isAmateur={g.is_amateur} />
                     </p>
-                    <p className="text-xs text-gray-400">#{g.world_ranking ?? '?'}</p>
+                    {g.asyncOwner ? (
+                      <p className="text-xs text-masters-green truncate">
+                        {g.asyncOwner.display_name} · <span className="font-mono">${g.asyncOwner.purchase_price.toLocaleString()}</span>
+                      </p>
+                    ) : (
+                      <p className="text-xs text-gray-400">#{g.world_ranking ?? '?'}</p>
+                    )}
                   </div>
                   {isCommissioner && !state.item && (
                     <button
