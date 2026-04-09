@@ -84,8 +84,18 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     const soldGolferIds = new Set((soldRes.data ?? []).map((s: any) => s.golfer_id));
     const ownerMap = new Map((ownershipsRes.data ?? []).map((o: any) => [o.golfer_id, { display_name: o.profiles?.display_name, user_id: o.user_id }]));
 
+    // Supabase returns joined tables under their table name (e.g. "golfers", "profiles"),
+    // but our TypeScript interface uses singular names ("golfer", "current_bidder").
+    // Normalize here so all downstream JSX can use state.item.golfer safely.
+    const normalizeItem = (row: any) => row ? {
+      ...row,
+      golfer: row.golfers ?? null,
+      current_bidder: row.profiles ?? null,
+    } : null;
+
     const soldWithOwners = (soldRes.data ?? []).map((s: any) => ({
       ...s,
+      golfer: s.golfers ?? null,
       owner: ownerMap.has(s.golfer_id) ? { display_name: ownerMap.get(s.golfer_id)?.display_name } : null,
     }));
 
@@ -94,7 +104,7 @@ export default function LiveAuctionPage({ params }: { params: { id: string } }) 
     );
 
     setState({
-      item: currentRes.data ?? null,
+      item: normalizeItem(currentRes.data),
       sold: soldWithOwners,
       pending,
     });
