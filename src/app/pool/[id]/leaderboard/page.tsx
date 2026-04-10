@@ -27,6 +27,8 @@ export default function LeaderboardPage({ params }: { params: { id: string } }) 
   // Payouts
   const [payoutMap, setPayoutMap] = useState<Map<string, number>>(new Map());
   const [poolStatus, setPoolStatus] = useState('');
+  const [scoreSource, setScoreSource] = useState<string | null>(null);
+  const [scoreUpdatedAt, setScoreUpdatedAt] = useState<Date | null>(null);
 
   // Chat
   const [messages, setMessages] = useState<PoolMessage[]>([]);
@@ -69,7 +71,7 @@ export default function LeaderboardPage({ params }: { params: { id: string } }) 
   async function loadData() {
     const [leaderboardRes, poolRes, rulesRes, ownershipsRes, scoresRes, golfersRes] = await Promise.all([
       supabase.from('leaderboard').select('*').eq('pool_id', params.id).order('total_to_par', { ascending: true, nullsFirst: false }),
-      supabase.from('pools').select('total_pot, status').eq('id', params.id).single(),
+      supabase.from('pools').select('total_pot, status, score_source, score_updated_at').eq('id', params.id).single(),
       supabase.from('payout_rules').select('*').eq('pool_id', params.id).eq('is_active', true),
       supabase.from('ownership').select('*').eq('pool_id', params.id),
       supabase.from('scores').select('*').eq('pool_id', params.id),
@@ -101,6 +103,9 @@ export default function LeaderboardPage({ params }: { params: { id: string } }) 
 
     if (pool) {
       setPoolStatus(pool.status);
+      const poolAny = pool as Record<string, unknown>;
+      if (poolAny.score_source) setScoreSource(poolAny.score_source as string);
+      if (poolAny.score_updated_at) setScoreUpdatedAt(new Date(poolAny.score_updated_at as string));
 
       if ((pool.status === 'tournament_active' || pool.status === 'completed') && rules.length > 0) {
         const payouts = calculatePayouts({ totalPot: pool.total_pot, leaderboard: data, rules, ownerships, scores, golfers });
@@ -284,7 +289,12 @@ export default function LeaderboardPage({ params }: { params: { id: string } }) 
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-display text-2xl text-masters-green">Leaderboard</h2>
         <div className="flex items-center gap-3">
-          {updatedAt && (
+          {scoreUpdatedAt && (
+            <p className="text-xs text-gray-400">
+              Source: {scoreSource ?? 'ESPN'} · Updated {scoreUpdatedAt.toLocaleTimeString()}
+            </p>
+          )}
+          {!scoreUpdatedAt && updatedAt && (
             <p className="text-xs text-gray-400">Live · Updated {updatedAt.toLocaleTimeString()}</p>
           )}
           <button

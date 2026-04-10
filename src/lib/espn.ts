@@ -40,7 +40,10 @@ export interface EspnCompetitor {
     type?: { name?: string; description?: string };
   };
   score?: { displayValue?: string };
-  linescores?: Array<{ displayValue?: string }>;
+  // Each linescore entry represents one round.
+  // `displayValue` is score-to-par (e.g. "-5", "+2", "E"), NOT raw strokes.
+  // `value` is an ESPN-internal float; do not use for stroke calculations.
+  linescores?: Array<{ displayValue?: string; value?: number }>;
 }
 
 // ── Fetching ──────────────────────────────────────────────────────────────────
@@ -151,9 +154,12 @@ export function parseGolferStatus(competitor: EspnCompetitor): 'active' | 'misse
 }
 
 /**
- * Build a lookup map of completed per-round scores from ESPN linescores.
- * Returns an array: index 0 = round 1, index 1 = round 2, etc.
- * Only includes rounds with a parseable stroke total.
+ * Build per-round scores from ESPN linescores.
+ *
+ * ESPN's outer linescore `displayValue` is score-to-par format:
+ *   "-5" | "+2" | "E" | "CUT" | etc.
+ * It is NOT a raw stroke count. Each entry corresponds to one completed/
+ * in-progress round (index 0 = round 1, etc.).
  */
 export function parseRoundScores(
   competitor: EspnCompetitor
@@ -161,12 +167,13 @@ export function parseRoundScores(
   const linescores = competitor.linescores ?? [];
   const results: Array<{ round: number; score_to_par: number; strokes: number }> = [];
   for (let i = 0; i < linescores.length; i++) {
-    const strokes = parseInt(linescores[i].displayValue ?? '', 10);
-    if (!Number.isFinite(strokes) || strokes <= 0) continue;
+    // displayValue is score-to-par: "-5", "+2", "E", not raw strokes
+    const stp = parseScoreToPar(linescores[i].displayValue);
+    if (stp === null) continue; // "CUT", "WD", or missing — skip
     results.push({
       round: i + 1,
-      score_to_par: strokes - AUGUSTA_PAR,
-      strokes,
+      score_to_par: stp,
+      strokes: AUGUSTA_PAR + stp,
     });
   }
   return results;
