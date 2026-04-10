@@ -53,8 +53,20 @@ export async function fetchScoreboard(eventId?: string): Promise<EspnScoreboardR
     headers: { Accept: 'application/json' },
     next: { revalidate: 0 },
   });
-  if (!res.ok) throw new Error(`ESPN scoreboard ${res.status}`);
-  return res.json();
+  if (!res.ok) throw new Error(`ESPN scoreboard ${res.status} for URL: ${url}`);
+  const data = await res.json();
+
+  // If a specific event ID was requested but returned no competitors, fall back to
+  // the general scoreboard so findMastersEvent can search by name.
+  if (eventId && (!data.events || data.events.length === 0)) {
+    const fallback = await fetch(SCOREBOARD_URL, {
+      headers: { Accept: 'application/json' },
+      next: { revalidate: 0 },
+    });
+    if (fallback.ok) return fallback.json();
+  }
+
+  return data;
 }
 
 /** Find the Masters event in a scoreboard response. */

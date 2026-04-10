@@ -52,7 +52,8 @@ export async function updateScoresForPool(
   // ── 2. Find the Masters event ─────────────────────────────────────────────
   const event = findMastersEvent(scoreboardData);
   if (!event) {
-    console.warn('[score-updater] Masters event not found in ESPN response');
+    const eventNames = (scoreboardData.events ?? []).map((e) => e.name).join(', ');
+    console.warn(`[score-updater] Masters event not found. Available events: [${eventNames || 'none'}]`);
     return result;
   }
   result.eventName = event.name;
