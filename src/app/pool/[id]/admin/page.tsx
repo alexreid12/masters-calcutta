@@ -630,6 +630,9 @@ export default function AdminPage({ params }: { params: { id: string } }) {
       <div className="flex items-center justify-between">
         <h2 className="font-display text-2xl text-masters-green">Admin</h2>
         <div className="flex items-center gap-3">
+          <Link href={`/pool/${params.id}/admin/scores`} className="btn-outline text-sm">
+            Manual Scores →
+          </Link>
           <Link href={`/pool/${params.id}/admin/payouts`} className="btn-outline text-sm">
             Payout Rules →
           </Link>
